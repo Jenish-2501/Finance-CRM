@@ -154,9 +154,29 @@ interface AccountingState {
     unitId: string;
     quantity: number;
     referenceId: string;
-    notes: string;
+    notes?: string;
     movementDate?: string;
-  }) => { success: boolean; error?: string };
+    vehicleNumber?: string;
+    transporterName?: string;
+    ewayBillNumber?: string;
+    dispatchPurpose?: string;
+  }) => { success: boolean; movementId?: string; referenceId?: string; error?: string };
+
+  dispatchBatchInventoryToCustomer: (params: {
+    customerId: string;
+    referenceId?: string;
+    notes?: string;
+    movementDate?: string;
+    vehicleNumber?: string;
+    transporterName?: string;
+    ewayBillNumber?: string;
+    dispatchPurpose?: string;
+    items: Array<{
+      productId: string;
+      unitId: string;
+      quantity: number;
+    }>;
+  }) => { success: boolean; movementIds?: string[]; referenceId?: string; error?: string };
 
   createCustomerReturn: (params: {
     customerId: string;
@@ -826,86 +846,148 @@ export const useAccountingStore = create<AccountingState>()(
         return newReceipt;
       },
 
-      dispatchInventoryToCustomer: ({ customerId, productId, unitId, quantity, referenceId, notes, movementDate }) => {
-        if (quantity <= 0) {
-          return { success: false, error: 'Dispatch quantity must be greater than zero.' };
+      dispatchInventoryToCustomer: ({
+        customerId,
+        productId,
+        unitId,
+        quantity,
+        referenceId,
+        notes,
+        movementDate,
+        vehicleNumber,
+        transporterName,
+        ewayBillNumber,
+        dispatchPurpose
+      }) => {
+        const batchRes = get().dispatchBatchInventoryToCustomer({
+          customerId,
+          referenceId,
+          notes,
+          movementDate,
+          vehicleNumber,
+          transporterName,
+          ewayBillNumber,
+          dispatchPurpose,
+          items: [{ productId, unitId, quantity }]
+        });
+
+        return {
+          success: batchRes.success,
+          movementId: batchRes.movementIds?.[0],
+          referenceId: batchRes.referenceId,
+          error: batchRes.error
+        };
+      },
+
+      dispatchBatchInventoryToCustomer: ({
+        customerId,
+        referenceId,
+        notes,
+        movementDate,
+        vehicleNumber,
+        transporterName,
+        ewayBillNumber,
+        dispatchPurpose,
+        items
+      }) => {
+        if (!items || items.length === 0) {
+          return { success: false, error: 'At least one item must be specified for dispatch.' };
+        }
+
+        for (const item of items) {
+          if (item.quantity <= 0) {
+            return { success: false, error: 'All dispatch quantities must be greater than zero.' };
+          }
         }
 
         const { products, productUnits, customers, getCurrentCompanyStock, currentUser } = get();
-        const product = products[productId];
         const customer = customers[customerId];
 
-        if (!product) return { success: false, error: 'Product not found.' };
         if (!customer) return { success: false, error: 'Customer not found.' };
 
-        // Convert requested quantity to primary units to check company stock
-        const pUnits = Object.values(productUnits).filter((pu) => pu.product_id === productId);
-        const qtyInPrimary = convertQuantity(quantity, unitId, product.primary_unit_id, pUnits);
-        const currentStock = getCurrentCompanyStock(productId);
+        // Validate stock for all items
+        for (const item of items) {
+          const product = products[item.productId];
+          if (!product) return { success: false, error: `Product not found: ${item.productId}` };
 
-        if (currentStock < qtyInPrimary) {
-          return {
-            success: false,
-            error: `Insufficient company stock. Available: ${currentStock}, Requested: ${qtyInPrimary} (Primary Units)`
-          };
+          const pUnits = Object.values(productUnits).filter((pu) => pu.product_id === item.productId);
+          const qtyInPrimary = convertQuantity(item.quantity, item.unitId, product.primary_unit_id, pUnits);
+          const currentStock = getCurrentCompanyStock(item.productId);
+
+          if (currentStock < qtyInPrimary) {
+            return {
+              success: false,
+              error: `Insufficient company warehouse stock for "${product.product_name}". Available: ${currentStock}, Requested: ${qtyInPrimary}`
+            };
+          }
         }
 
         const now = new Date().toISOString();
         const date = movementDate || now;
-        const cimId = `cim-${Date.now()}`;
-        const imId = `im-${Date.now()}`;
+        const refId = referenceId || `CH-${Math.floor(1000 + Math.random() * 9000)}`;
 
-        // ATOMIC MUTATION: Customer movement and Company movement together
-        const newCustomerMov: CustomerInventoryMovement = {
-          id: cimId,
-          customer_id: customerId,
-          product_id: productId,
-          unit_id: unitId,
-          quantity,
-          movement_type: 'DISPATCH',
-          movement_date: date,
-          reference_type: 'DISPATCH',
-          reference_id: referenceId || `CH-${Math.floor(1000 + Math.random() * 9000)}`,
-          notes: notes || `Direct site dispatch to ${customer.customer_name}`,
-          created_at: now,
-          created_by: currentUser?.id || 'usr-admin'
-        };
+        const newCustomerMovs: Record<string, CustomerInventoryMovement> = {};
+        const newCompanyMovs: Record<string, InventoryMovement> = {};
+        const createdIds: string[] = [];
 
-        const newCompanyMov: InventoryMovement = {
-          id: imId,
-          product_id: productId,
-          unit_id: unitId,
-          quantity,
-          movement_type: 'CUSTOMER_DISPATCH',
-          movement_date: date,
-          reference_type: 'CUSTOMER_DISPATCH',
-          reference_id: cimId,
-          notes: `Dispatched to ${customer.customer_name} (Ref: ${newCustomerMov.reference_id})`,
-          created_at: now,
-          created_by: currentUser?.id || 'usr-admin'
-        };
+        items.forEach((item, idx) => {
+          const cimId = `cim-${Date.now()}-${idx}`;
+          const imId = `im-${Date.now()}-${idx}`;
+          createdIds.push(cimId);
+
+          newCustomerMovs[cimId] = {
+            id: cimId,
+            customer_id: customerId,
+            product_id: item.productId,
+            unit_id: item.unitId,
+            quantity: item.quantity,
+            movement_type: 'DISPATCH',
+            movement_date: date,
+            reference_type: 'DISPATCH',
+            reference_id: refId,
+            notes: notes || `Direct site dispatch to ${customer.customer_name}`,
+            vehicle_number: vehicleNumber,
+            transporter_name: transporterName,
+            eway_bill_number: ewayBillNumber,
+            dispatch_purpose: dispatchPurpose,
+            created_at: now,
+            created_by: currentUser?.id || 'usr-admin'
+          };
+
+          newCompanyMovs[imId] = {
+            id: imId,
+            product_id: item.productId,
+            unit_id: item.unitId,
+            quantity: item.quantity,
+            movement_type: 'CUSTOMER_DISPATCH',
+            movement_date: date,
+            reference_type: 'CUSTOMER_DISPATCH',
+            reference_id: cimId,
+            notes: `Dispatched to ${customer.customer_name} (Challan: ${refId})`,
+            created_at: now,
+            created_by: currentUser?.id || 'usr-admin'
+          };
+        });
 
         set((state) => ({
           customerInventoryMovements: {
             ...state.customerInventoryMovements,
-            [cimId]: newCustomerMov
+            ...newCustomerMovs
           },
           inventoryMovements: {
             ...state.inventoryMovements,
-            [imId]: newCompanyMov
+            ...newCompanyMovs
           }
         }));
 
-        get().logAudit('CUSTOMER_DISPATCH', 'CUSTOMER_INVENTORY_MOVEMENT', cimId, {
+        get().logAudit('CUSTOMER_DISPATCH', 'CUSTOMER_INVENTORY_MOVEMENT', refId, {
           customerId,
           customerName: customer.customer_name,
-          productId,
-          productName: product.product_name,
-          quantity,
-          referenceId: newCustomerMov.reference_id
+          itemsCount: items.length,
+          referenceId: refId
         });
 
-        return { success: true };
+        return { success: true, movementIds: createdIds, referenceId: refId };
       },
 
       createCustomerReturn: ({ customerId, productId, unitId, quantity, referenceId, notes, movementDate }) => {

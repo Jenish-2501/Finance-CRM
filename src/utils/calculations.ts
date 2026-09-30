@@ -256,3 +256,45 @@ export function calculateInvoiceOutstanding(
   const outstanding = Math.max(0, roundCurrency(grandTotal - totalPaid));
   return { totalPaid, outstanding };
 }
+
+/**
+ * Converts a numeric amount to Indian currency words representation.
+ */
+export function numberToWordsINR(amount: number): string {
+  if (isNaN(amount) || amount === 0) return 'Rupees Zero Only';
+  const absAmount = Math.floor(Math.abs(amount));
+
+  const units = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten',
+    'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+  const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+
+  const convertTwoDigits = (n: number): string => {
+    if (n < 20) return units[n];
+    return `${tens[Math.floor(n / 10)]} ${units[n % 10]}`.trim();
+  };
+
+  const convertThreeDigits = (n: number): string => {
+    const h = Math.floor(n / 100);
+    const rest = n % 100;
+    let s = '';
+    if (h > 0) s += `${units[h]} Hundred `;
+    if (rest > 0) s += convertTwoDigits(rest);
+    return s.trim();
+  };
+
+  const crore = Math.floor(absAmount / 10000000);
+  let remainder = absAmount % 10000000;
+  const lakh = Math.floor(remainder / 100000);
+  remainder = remainder % 100000;
+  const thousand = Math.floor(remainder / 1000);
+  const hundredPart = remainder % 1000;
+
+  const parts: string[] = [];
+  if (crore > 0) parts.push(`${convertTwoDigits(crore)} Crore`);
+  if (lakh > 0) parts.push(`${convertTwoDigits(lakh)} Lakh`);
+  if (thousand > 0) parts.push(`${convertTwoDigits(thousand)} Thousand`);
+  if (hundredPart > 0) parts.push(convertThreeDigits(hundredPart));
+
+  return `Rupees ${parts.join(' ')} Only`.replace(/\s+/g, ' ').trim();
+}
+

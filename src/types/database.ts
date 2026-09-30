@@ -173,6 +173,10 @@ export interface CustomerInventoryMovement {
   reference_type: 'DISPATCH' | 'RETURN' | 'MANUAL_ADJUSTMENT';
   reference_id: string;
   notes: string;
+  vehicle_number?: string;
+  transporter_name?: string;
+  eway_bill_number?: string;
+  dispatch_purpose?: string;
   created_at: string;
   created_by: string; // user id
 }

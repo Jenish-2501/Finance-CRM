@@ -11,10 +11,12 @@ import {
   RotateCcw,
   SlidersHorizontal,
   CheckCircle,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Printer
 } from 'lucide-react';
 import { Modal } from '../components/common/Modal';
 import { Badge } from '../components/common/Badge';
+import { DeliveryChallanPrintView } from '../components/challan/DeliveryChallanPrintView';
 
 export const CompanyInventoryView: React.FC = () => {
   const {
@@ -24,13 +26,15 @@ export const CompanyInventoryView: React.FC = () => {
     inventoryMovements,
     createStockReceipt,
     createInventoryAdjustment,
-    stockReceipts
+    stockReceipts,
+    customerInventoryMovements
   } = useAccountingStore();
 
   const [activeTab, setActiveTab] = useState<'balances' | 'movements' | 'receipts'>('balances');
   const [searchQuery, setSearchQuery] = useState('');
   const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false);
   const [isAdjustModalOpen, setIsAdjustModalOpen] = useState(false);
+  const [selectedChallanRef, setSelectedChallanRef] = useState<string | null>(null);
 
   // Stock Receipt Form
   const [receiptSupplier, setReceiptSupplier] = useState('');
@@ -316,7 +320,22 @@ export const CompanyInventoryView: React.FC = () => {
 
                       <td className="py-3 px-3 font-sans text-neutral-600">
                         <div>{mov.notes}</div>
-                        <div className="text-[10px] font-mono text-neutral-400">Ref: #{mov.reference_id}</div>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className="text-[10px] font-mono text-neutral-400">Ref: #{mov.reference_id}</span>
+                          {mov.movement_type === 'CUSTOMER_DISPATCH' && (
+                            <button
+                              onClick={() => {
+                                const cim = customerInventoryMovements[mov.reference_id];
+                                setSelectedChallanRef(cim?.reference_id || mov.reference_id);
+                              }}
+                              className="px-2 py-0.5 text-[10px] font-semibold bg-neutral-900 text-white rounded hover:bg-neutral-800 inline-flex items-center gap-1 shadow-2xs cursor-pointer"
+                              title="Print / View Delivery Challan"
+                            >
+                              <Printer className="w-3 h-3" />
+                              <span>Challan</span>
+                            </button>
+                          )}
+                        </div>
                       </td>
 
                       <td className="py-3 px-4 text-neutral-500">{mov.created_by}</td>
@@ -629,6 +648,21 @@ export const CompanyInventoryView: React.FC = () => {
           </div>
         </form>
       </Modal>
+      {/* Global Delivery Challan Print & Preview Modal */}
+      {selectedChallanRef && (
+        <Modal
+          isOpen={Boolean(selectedChallanRef)}
+          onClose={() => setSelectedChallanRef(null)}
+          title={`Delivery Challan #${selectedChallanRef}`}
+          subtitle="Rule 55 CGST / SGST Delivery Challan for customer goods dispatch"
+          maxWidth="full"
+        >
+          <DeliveryChallanPrintView
+            challanReference={selectedChallanRef}
+            onClose={() => setSelectedChallanRef(null)}
+          />
+        </Modal>
+      )}
     </div>
   );
 };
