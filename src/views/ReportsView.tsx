@@ -44,12 +44,17 @@ export const ReportsView: React.FC = () => {
         '\n'
       );
     const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `${filename}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    if (window.electronAPI) {
+      // Strip out the URI prefix before sending raw CSV to Electron FS
+      window.electronAPI.files.saveCSV(`${filename}.csv`, csvContent.replace('data:text/csv;charset=utf-8,', ''));
+    } else {
+      const link = document.createElement('a');
+      link.setAttribute('href', encodedUri);
+      link.setAttribute('download', `${filename}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
   };
 
   // 1. Sales Summary & Register

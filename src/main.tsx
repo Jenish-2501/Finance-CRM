@@ -3,6 +3,38 @@ import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
 
+
+
+declare global {
+  interface Window {
+    electronAPI: {
+      store: {
+        migrateLocalStorage: (data: any) => Promise<boolean>;
+        loadAll: () => Promise<any>;
+      };
+      users: { upsert: (data: any) => Promise<boolean>; };
+      business_settings: { upsert: (data: any) => Promise<boolean>; };
+      customers: { upsert: (data: any) => Promise<boolean>; delete: (id: string) => Promise<boolean>; };
+      products: { upsert: (data: any) => Promise<boolean>; };
+      product_prices: { upsert: (data: any) => Promise<boolean>; };
+      product_units: { upsert: (data: any) => Promise<boolean>; };
+      stock_receipts: { upsert: (data: any) => Promise<boolean>; };
+      stock_receipt_items: { upsert: (data: any) => Promise<boolean>; };
+      inventory_movements: { upsert: (data: any) => Promise<boolean>; };
+      customer_inventory_movements: { upsert: (data: any) => Promise<boolean>; };
+      invoices: { transaction: (payload: any) => Promise<boolean>; };
+      invoice_payments: { upsert: (data: any) => Promise<boolean>; };
+      audit_logs: { upsert: (data: any) => Promise<boolean>; };
+      files: {
+        saveCSV: (filename: string, content: string) => Promise<boolean>;
+      };
+    };
+  }
+}
+
+
+
+
 interface ErrorBoundaryProps {
   children: ReactNode;
 }

@@ -58,12 +58,17 @@ export const CustomerLedgerView: React.FC<CustomerLedgerViewProps> = ({
 
     const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
     const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `statement_${customer?.customer_name.replace(/\s+/g, '_')}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    const filename = `statement_${customer?.customer_name.replace(/\s+/g, '_')}.csv`;
+    if (window.electronAPI) {
+      window.electronAPI.files.saveCSV(filename, csvContent.replace('data:text/csv;charset=utf-8,', ''));
+    } else {
+      const link = document.createElement('a');
+      link.setAttribute('href', encodedUri);
+      link.setAttribute('download', filename);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
   };
 
   return (

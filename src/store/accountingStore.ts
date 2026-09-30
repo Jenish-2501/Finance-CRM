@@ -1,5 +1,33 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+
+import { createJSONStorage, StateStorage } from 'zustand/middleware';
+
+// Safe wrapper around localStorage to check and migrate old data to SQLite
+const electronStorage: StateStorage = {
+  getItem: async (name: string): Promise<string | null> => {
+    if (window.electronAPI) {
+      const oldLocalDataStr = localStorage.getItem(name);
+      if (oldLocalDataStr) {
+        try {
+          const parsed = JSON.parse(oldLocalDataStr);
+          await window.electronAPI.store.migrateLocalStorage(parsed);
+        } catch (e) {
+          console.error("Migration failed", e);
+        }
+      }
+
+      const data = await window.electronAPI.store.loadAll();
+      return JSON.stringify({ state: data, version: 1 });
+    }
+    return null;
+  },
+  setItem: (name: string, value: string): void => {
+  },
+  removeItem: (name: string): void => {
+  },
+};
+
 import {
   AppUser,
   BusinessSettings,
@@ -598,6 +626,7 @@ export const useAccountingStore = create<AccountingState>()(
           customers: { ...state.customers, [id]: newCust }
         }));
         get().logAudit('CUSTOMER_CREATED', 'CUSTOMER', id, newCust as unknown as Record<string, unknown>);
+        if(window.electronAPI) window.electronAPI.customers.upsert(newCust);
         return newCust;
       },
 
@@ -709,6 +738,11 @@ export const useAccountingStore = create<AccountingState>()(
           productPrices: { ...state.productPrices, ...newPrices }
         }));
 
+        if(window.electronAPI) {
+          window.electronAPI.products.upsert(newProd);
+          Object.values(newPrices).forEach(np => window.electronAPI.product_prices.upsert(np));
+          Object.values(newUnits).forEach(nu => window.electronAPI.product_units.upsert(nu));
+        }
         get().logAudit('PRODUCT_CREATED', 'PRODUCT', id, newProd as unknown as Record<string, unknown>);
         return newProd;
       },
@@ -1407,6 +1441,7 @@ export const useAccountingStore = create<AccountingState>()(
           invoicePayments: { ...state.invoicePayments, [paymentId]: updated }
         }));
 
+        if(window.electronAPI) window.electronAPI.invoice_payments.upsert(updated);
         get().logAudit('PAYMENT_CANCELLED', 'INVOICE_PAYMENT', paymentId, {
           invoiceId: payment.invoice_id,
           amount: payment.amount,
@@ -1434,6 +1469,7 @@ export const useAccountingStore = create<AccountingState>()(
         set((state) => ({
           auditLogs: [newLog, ...state.auditLogs]
         }));
+        if (window.electronAPI && action !== 'APP_START') window.electronAPI.audit_logs.upsert(newLog);
       },
 
       resetToSeedData: () => {
@@ -1460,6 +1496,7 @@ export const useAccountingStore = create<AccountingState>()(
     }),
     {
       name: 'acculedger_accounting_store_v1',
+      storage: createJSONStorage(() => electronStorage),
       version: 2,
       migrate: (persistedState: any) => {
         if (!persistedState) return persistedState;
