@@ -149,6 +149,10 @@ const api = {
     integrity: (): Promise<{ ok: boolean; detail: string }> =>
       ipcRenderer.invoke('maintenance:integrity'),
     backup: (): Promise<{ ok: boolean; file?: string }> => ipcRenderer.invoke('maintenance:backup'),
+    exportBackup: (): Promise<{ ok: boolean; file?: string; error?: string }> =>
+      ipcRenderer.invoke('maintenance:exportBackup'),
+    restoreBackup: (): Promise<{ ok: boolean; error?: string; safetyFile?: string }> =>
+      ipcRenderer.invoke('maintenance:restoreBackup'),
   },
   files: {
     saveCSV: (filename: string, content: string): Promise<boolean> =>

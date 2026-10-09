@@ -15,6 +15,7 @@ import { CustomerLedgerView } from './views/CustomerLedgerView';
 import { ReportsView } from './views/ReportsView';
 import { SettingsView } from './views/SettingsView';
 import { AuditActivityView } from './views/AuditActivityView';
+import { AppSettingsView } from './views/AppSettingsView';
 import { Modal } from './components/common/Modal';
 import { InvoicePrintView } from './components/invoice/InvoicePrintView';
 import { LoginView } from './views/LoginView';
@@ -169,6 +170,8 @@ export default function App() {
             {currentTab === 'activity' && <AuditActivityView />}
 
             {currentTab === 'pricing' && <CustomerPricingView />}
+
+            {currentTab === 'app-settings' && <AppSettingsView />}
           </div>
         </main>
       </div>

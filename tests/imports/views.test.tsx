@@ -18,6 +18,7 @@ import { CustomerInventoryView } from '../../src/views/CustomerInventoryView';
 import { ReportsView } from '../../src/views/ReportsView';
 import { SettingsView } from '../../src/views/SettingsView';
 import { AuditActivityView } from '../../src/views/AuditActivityView';
+import { AppSettingsView } from '../../src/views/AppSettingsView';
 import { LoginView } from '../../src/views/LoginView';
 
 describe('view import surface', () => {
@@ -33,7 +34,7 @@ describe('view import surface', () => {
       DashboardView, BillingView, CustomerPricingView, InvoicesView, PaymentsView,
       CustomerLedgerView, CustomersView, ProductsView, CompanyInventoryView,
       CustomerInventoryView, ReportsView, SettingsView, AuditActivityView,
-      LoginView,
+      AppSettingsView, LoginView,
     ]) {
       expect(typeof view).toBe('function');
     }

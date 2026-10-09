@@ -15,10 +15,11 @@
     "test:m1": "tsx electron/database/__tests__/m1.test.ts",
     "test:m2": "tsx electron/database/__tests__/m2.test.ts",
     "test:desktop": "tsx electron/database/__tests__/desktop.test.ts",
+    "test:restore": "tsx electron/database/__tests__/restore.test.ts",
     "test:calc": "vitest run tests/money-utils tests/tax-gst tests/invoice-calc tests/ledger tests/payments tests/inventory tests/reports tests/customer-pricing",
     "test:ui": "vitest run tests/modal-focus",
     "test:module": "vitest run",
-    "test:all": "npm run lint && npm run test:db && npm run test:m1 && npm run test:m2 && npm run test:calc && npm run test:ui"
+    "test:all": "npm run lint && npm run test:db && npm run test:m1 && npm run test:m2 && npm run test:restore && npm run test:calc && npm run test:ui"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

@@ -133,6 +133,8 @@ declare global {
         }>;
         integrity: () => Promise<{ ok: boolean; detail: string }>;
         backup: () => Promise<{ ok: boolean; file?: string }>;
+        exportBackup: () => Promise<{ ok: boolean; file?: string; error?: string }>;
+        restoreBackup: () => Promise<{ ok: boolean; error?: string; safetyFile?: string }>;
       };
       files: {
         saveCSV: (filename: string, content: string) => Promise<boolean>;

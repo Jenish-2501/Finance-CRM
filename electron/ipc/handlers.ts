@@ -7,7 +7,8 @@ import { saveDiffTransaction, loadFullState } from '../services/transactionServi
 import { migrateLocalStorageToSqlite } from '../services/migrationService.js';
 import { checkDatabaseHealth, checkDatabaseIntegrity } from '../database/index.js';
 import { getDatabaseStructure } from '../services/schemaService.js';
-import { createBackup } from '../services/backupService.js';
+import { createBackup, restoreDatabaseFromFile } from '../services/backupService.js';
+import { getUserDataDir } from '../utils/appPaths.js';
 import { verifyPasscode, changePasscode, isValidPasscodeFormat } from '../services/authService.js';
 import {
   getBusinessSettings,
@@ -175,6 +176,45 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
   safeHandler('maintenance:health', () => checkDatabaseHealth());
   safeHandler('maintenance:integrity', () => checkDatabaseIntegrity());
   safeHandler('maintenance:backup', () => createBackup());
+  // Full-database download for periodic client backups: takes a VACUUM INTO
+  // snapshot (complete data + structure, transaction-safe under WAL), then lets
+  // the owner choose where to save it (desktop, pen drive, …) via save dialog.
+  // The internal retained copy stays under userData/backups (pruned to 7).
+  // { ok:false, error:'CANCELLED' } when the dialog is dismissed — stay silent.
+  safeHandler('maintenance:exportBackup', async () => {
+    const made = createBackup();
+    if (!made.ok || !made.file) return { ok: false };
+    const win = getWindow();
+    if (!win) return { ok: false, error: 'NO_WINDOW' };
+    const { filePath, canceled } = await dialog.showSaveDialog(win, {
+      title: 'Save Database Backup',
+      defaultPath: path.basename(made.file),
+      filters: [{ name: 'SQLite Database', extensions: ['sqlite', 'db'] }],
+    });
+    if (canceled || !filePath) return { ok: false, error: 'CANCELLED' };
+    try {
+      await fs.promises.copyFile(made.file, filePath);
+      return { ok: true, file: filePath };
+    } catch {
+      logger.error('backup.export_failed', {});
+      return { ok: false };
+    }
+  });
+
+  // Restore with override: the owner picks a backup file; after validation the
+  // live database is replaced (current data is safety-backed-up first). The
+  // renderer then reloads itself from the restored database.
+  safeHandler('maintenance:restoreBackup', async () => {
+    const win = getWindow();
+    if (!win) return { ok: false, error: 'NO_WINDOW' };
+    const { filePaths, canceled } = await dialog.showOpenDialog(win, {
+      title: 'Restore Database Backup (replaces current data)',
+      filters: [{ name: 'SQLite Database', extensions: ['sqlite', 'db'] }],
+      properties: ['openFile'],
+    });
+    if (canceled || filePaths.length === 0) return { ok: false, error: 'CANCELLED' };
+    return restoreDatabaseFromFile(filePaths[0], getUserDataDir());
+  });
 
   // ---- Printing (renderer never touches webContents directly) ----
   // printers:list returns the OS printer list (name/displayName/isDefault/status).

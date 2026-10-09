@@ -153,6 +153,11 @@ Printing (added later, same module): `printers:list` (OS printer list via `getPr
 envelope results) in `electron/ipc/handlers.ts` + `preload.ts`; picker UI in
 `DeliveryChallanPrintView` (printer dropdown, remembered choice, copies, direct/system paths).
 Print output reuses the existing `@media print` CSS, so silent prints match the dialog path exactly.
+Backup download UI + restore-with-override UI: App Settings tab (`src/views/AppSettingsView.tsx`,
+tests in `tests/app-settings/`) driving `maintenance:exportBackup` — VACUUM snapshot + owner-chosen
+save location for periodic full (data + structure) backups — and `maintenance:restoreBackup`
+(`electron/services/backupService.ts` validate + checkpoint/close/replace/reopen with safety copy
+and rollback; `electron/database/__tests__/restore.test.ts`, `npm run test:restore`).
 Dependencies: M13, M14.
 
 ### M17 app-shell
