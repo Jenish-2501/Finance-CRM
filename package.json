@@ -1,0 +1,86 @@
+{
+  "name": "react-example",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "vite --port=3000 --host=0.0.0.0",
+    "build": "vite build && electron-builder",
+    "build:win": "vite build && electron-builder --win",
+    "preview": "vite preview",
+    "clean": "rm -rf dist dist-electron server.js release",
+    "lint": "tsc --noEmit",
+    "test:db": "tsx electron/database/__tests__/db.test.ts",
+    "test:m1": "tsx electron/database/__tests__/m1.test.ts",
+    "test:m2": "tsx electron/database/__tests__/m2.test.ts",
+    "test:desktop": "tsx electron/database/__tests__/desktop.test.ts",
+    "test:calc": "vitest run tests/money-utils tests/tax-gst tests/invoice-calc tests/ledger tests/payments tests/inventory tests/reports tests/customer-pricing",
+    "test:ui": "vitest run tests/modal-focus",
+    "test:module": "vitest run",
+    "test:all": "npm run lint && npm run test:db && npm run test:m1 && npm run test:m2 && npm run test:calc && npm run test:ui"
+  },
+  "dependencies": {
+    "@google/genai": "^2.4.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "@vitejs/plugin-react": "^6.1.1",
+    "better-sqlite3": "^13.0.3",
+    "dotenv": "^17.2.3",
+    "drizzle-orm": "^0.45.4",
+    "express": "^4.21.2",
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.8",
+    "lucide-react": "^0.546.0",
+    "motion": "^12.23.24",
+    "react": "^19.0.1",
+    "react-dom": "^19.0.1",
+    "vite": "^8.3.0",
+    "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^16.3.3",
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.14.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "autoprefixer": "^10.4.21",
+    "decimal.js": "^10.6.0",
+    "electron": "^44.5.1",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.0",
+    "fast-check": "^4.10.2",
+    "jsdom": "^29.1.1",
+    "playwright-core": "^1.64.0",
+    "tailwindcss": "^4.3.3",
+    "tsx": "^4.21.0",
+    "typescript": "^7.0.2",
+    "vite-plugin-electron": "^1.1.2",
+    "vite-plugin-electron-renderer": "^1.0.0",
+    "vitest": "^5.0.3"
+  },
+  "build": {
+    "appId": "com.reactexample.app",
+    "productName": "AccuLedger",
+    "artifactName": "AccuLedgerSetup.exe",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json",
+      "node_modules/better-sqlite3/**/*"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "**/*.node"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "buildDependenciesFromSource": false
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "AccuLedger - Enterprise Expense & Inventory Accounting",
+  "description": "Enterprise Expense, Inventory, and Billing Management accounting software prototype with normalized relational state, historical invoice snapshots, inventory movement ledgers, and customer ledger reconciliation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

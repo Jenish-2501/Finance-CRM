@@ -1,0 +1,166 @@
+
+> react-example@1.0.0 dev
+> vite --port=3000 --host=0.0.0.0
+
+[33m(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vite.config.ts:36:27). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.[39m
+
+  [32m[1mVITE[22m v8.3.1[39m  [2mready in [0m[1m7357[22m[2m[0m ms[22m
+
+  [32m➜[39m  [1mLocal[22m:   [36mhttp://localhost:[1m3000[22m/[39m
+  [32m➜[39m  [1mNetwork[22m: [36mhttp://192.168.31.33:[1m3000[22m/[39m  [2mWi-Fi[22m
+[2m[32m  ➜[39m[22m[2m  press [22m[1mh + enter[22m[2m to show help[22m
+[36mvite v8.3.1 [32mbuilding client environment for development...[36m[39m
+[36m
+watching for file changes...[39m
+[36mvite v8.3.1 [32mbuilding client environment for development...[36m[39m
+[36m
+watching for file changes...[39m
+[36m
+build started...[39m
+[36m
+build started...[39m
+transforming...
+transforming...
+✓ 2 modules transformed.
+✓ 8 modules transformed.
+rendering chunks...
+rendering chunks...
+computing gzip size...
+computing gzip size...
+dist-electron/preload.js  0.67 kB │ gzip: 0.31 kB
+
+dist-electron/repositories-C5Dy3mD3.js     4.05 kB │ gzip: 0.84 kB
+dist-electron/main.js                      8.41 kB │ gzip: 2.04 kB
+dist-electron/baseRepository-fa7hfdVs.js  10.44 kB │ gzip: 2.24 kB
+
+[36mbuilt in 334ms.[39m
+[33m[33m[INEFFECTIVE_DYNAMIC_IMPORT] [0melectron/services/transactionService.ts is dynamically imported by electron/main.ts but also statically imported by electron/main.ts, dynamic import will not move module into another chunk.
+[39m
+[36mbuilt in 335ms.[39m
+
+[2m8:24:36 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/index.css[22m
+[2m8:24:37 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/index.css, /src/App.tsx, /src/views/CustomersView.tsx, /src/components/layout/Header.tsx, /src/views/DashboardView.tsx, /src/views/ProductsView.tsx, /src/views/InvoicesView.tsx, /src/views/PaymentsView.tsx, /src/views/CompanyInventoryView.tsx, /src/views/CustomerLedgerView.tsx, /src/views/CustomerInventoryView.tsx, /src/views/SettingsView.tsx, /src/views/BillingView.tsx, /src/views/ReportsView.tsx, /src/views/AuditActivityView.tsx, /src/views/UsersRolesView.tsx and 1 more[22m
+[2m8:24:37 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/index.css, /src/App.tsx, /src/views/CustomersView.tsx, /src/components/layout/Header.tsx, /src/views/DashboardView.tsx, /src/views/ProductsView.tsx, /src/views/InvoicesView.tsx, /src/views/PaymentsView.tsx, /src/views/CompanyInventoryView.tsx, /src/views/CustomerLedgerView.tsx, /src/views/CustomerInventoryView.tsx, /src/views/SettingsView.tsx, /src/views/BillingView.tsx, /src/views/ReportsView.tsx, /src/views/AuditActivityView.tsx, /src/views/UsersRolesView.tsx and 2 more[22m
+[2m8:24:44 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/App.tsx, /src/views/CustomersView.tsx, /src/components/layout/Header.tsx, /src/views/DashboardView.tsx, /src/views/ProductsView.tsx, /src/views/InvoicesView.tsx, /src/views/PaymentsView.tsx, /src/views/CompanyInventoryView.tsx, /src/views/CustomerLedgerView.tsx, /src/views/CustomerInventoryView.tsx, /src/views/SettingsView.tsx, /src/views/BillingView.tsx, /src/views/ReportsView.tsx, /src/views/AuditActivityView.tsx, /src/views/UsersRolesView.tsx and 2 more[22m
+[2m8:24:44 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/App.tsx, /src/views/CustomersView.tsx, /src/components/layout/Header.tsx, /src/views/DashboardView.tsx, /src/views/ProductsView.tsx, /src/views/InvoicesView.tsx, /src/views/PaymentsView.tsx, /src/views/CompanyInventoryView.tsx, /src/views/CustomerLedgerView.tsx, /src/views/CustomerInventoryView.tsx, /src/views/SettingsView.tsx, /src/views/BillingView.tsx, /src/views/ReportsView.tsx, /src/views/AuditActivityView.tsx, /src/views/UsersRolesView.tsx and 2 more[22m
+[2m8:27:00 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/main.tsx, /src/index.css[22m
+[2m8:27:00 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/index.css[22m
+[2m8:27:00 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/index.css[22m
+[36m
+build started...[39m
+[36m
+build started...[39m
+transforming...
+transforming...
+✓ 2 modules transformed.
+rendering chunks...
+✓ 8 modules transformed.
+computing gzip size...
+rendering chunks...
+dist-electron/preload.js  0.75 kB │ gzip: 0.34 kB
+
+[36mbuilt in 38ms.[39m
+[2m8:27:00 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/index.css[22m
+computing gzip size...
+[2m8:27:00 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/index.css[22m
+dist-electron/repositories-C5Dy3mD3.js     4.05 kB │ gzip: 0.84 kB
+dist-electron/main.js                      9.06 kB │ gzip: 2.20 kB
+dist-electron/baseRepository-fa7hfdVs.js  10.44 kB │ gzip: 2.24 kB
+
+[2m8:27:00 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/index.css[22m
+[33m[33m[INEFFECTIVE_DYNAMIC_IMPORT] [0melectron/services/transactionService.ts is dynamically imported by electron/main.ts but also statically imported by electron/main.ts, dynamic import will not move module into another chunk.
+[39m
+[36mbuilt in 139ms.[39m
+[2m8:27:00 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/index.css[22m
+
+[2m8:27:06 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/components/invoice/InvoicePrintView.tsx, /src/index.css[22m
+[2m8:27:06 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/components/invoice/InvoicePrintView.tsx, /src/index.css[22m
+[2m8:27:10 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/components/invoice/InvoicePrintView.tsx, /src/index.css[22m
+[2m8:27:15 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/index.css, /src/components/challan/DeliveryChallanPrintView.tsx[22m
+[2m8:27:16 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/index.css, /src/components/challan/DeliveryChallanPrintView.tsx[22m
+[2m8:27:26 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/index.css, /src/components/challan/DeliveryChallanPrintView.tsx[22m
+[2m8:31:59 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/index.css[22m
+[2m8:31:59 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/main.tsx, /src/index.css[22m
+[2m8:31:59 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/index.css[22m
+[36m
+build started...[39m
+[36m
+build started...[39m
+transforming...
+transforming...
+✓ 2 modules transformed.
+rendering chunks...
+✓ 8 modules transformed.
+computing gzip size...
+dist-electron/preload.js  0.86 kB │ gzip: 0.36 kB
+
+[36mbuilt in 31ms.[39m
+[2m8:31:59 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/index.css[22m
+rendering chunks...
+computing gzip size...
+[2m8:31:59 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/index.css[22m
+dist-electron/repositories-C5Dy3mD3.js     4.05 kB │ gzip: 0.84 kB
+dist-electron/main.js                      9.60 kB │ gzip: 2.24 kB
+dist-electron/baseRepository-fa7hfdVs.js  10.44 kB │ gzip: 2.24 kB
+
+[2m8:31:59 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/index.css[22m
+[2m8:31:59 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/index.css[22m
+[33m[33m[INEFFECTIVE_DYNAMIC_IMPORT] [0melectron/services/transactionService.ts is dynamically imported by electron/main.ts but also statically imported by electron/main.ts, dynamic import will not move module into another chunk.
+[39m
+[36mbuilt in 198ms.[39m
+
+[2m8:32:04 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/components/invoice/InvoicePrintView.tsx, /src/index.css[22m
+[2m8:32:05 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/components/invoice/InvoicePrintView.tsx, /src/index.css[22m
+[2m8:32:06 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [optimizer] bundling dependencies...
+[2m8:32:15 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/index.css, /src/components/challan/DeliveryChallanPrintView.tsx[22m
+[2m8:32:19 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mdependencies optimized: [33mjspdf-autotable, jspdf[32m[39m
+[2m8:32:19 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32moptimized dependencies changed. reloading[39m
+[2m8:33:01 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/index.css[22m
+[2m8:33:01 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/main.tsx, /src/index.css[22m
+[2m8:33:01 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/index.css[22m
+[36m
+build started...[39m
+[36m
+build started...[39m
+transforming...
+transforming...
+✓ 2 modules transformed.
+rendering chunks...
+computing gzip size...
+dist-electron/preload.js  0.78 kB │ gzip: 0.34 kB
+
+[36mbuilt in 14ms.[39m
+[2m8:33:01 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/index.css[22m
+✓ 8 modules transformed.
+rendering chunks...
+computing gzip size...
+[2m8:33:01 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/index.css[22m
+dist-electron/repositories-C5Dy3mD3.js     4.05 kB │ gzip: 0.84 kB
+dist-electron/main.js                      8.95 kB │ gzip: 2.15 kB
+dist-electron/baseRepository-fa7hfdVs.js  10.44 kB │ gzip: 2.24 kB
+
+[2m8:33:01 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/index.css[22m
+[33m[33m[INEFFECTIVE_DYNAMIC_IMPORT] [0melectron/services/transactionService.ts is dynamically imported by electron/main.ts but also statically imported by electron/main.ts, dynamic import will not move module into another chunk.
+[39m
+[2m8:33:01 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/index.css[22m
+[36mbuilt in 332ms.[39m
+[36m
+build started...[39m
+transforming...
+✓ 8 modules transformed.
+rendering chunks...
+computing gzip size...
+[2m8:33:01 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/index.css[22m
+dist-electron/repositories-C5Dy3mD3.js     4.05 kB │ gzip: 0.84 kB
+dist-electron/main.js                      8.95 kB │ gzip: 2.15 kB
+dist-electron/baseRepository-fa7hfdVs.js  10.44 kB │ gzip: 2.24 kB
+
+[33m[33m[INEFFECTIVE_DYNAMIC_IMPORT] [0melectron/services/transactionService.ts is dynamically imported by electron/main.ts but also statically imported by electron/main.ts, dynamic import will not move module into another chunk.
+[39m
+[2m8:33:01 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/index.css[22m
+[36mbuilt in 71ms.[39m
+
+[2m8:33:01 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/index.css[22m
+
