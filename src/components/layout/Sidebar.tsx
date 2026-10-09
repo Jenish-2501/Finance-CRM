@@ -12,7 +12,6 @@ import {
   Settings,
   History,
   FileCheck,
-  Database,
   Tag
 } from 'lucide-react';
 
@@ -29,7 +28,6 @@ export type NavigationTab =
   | 'reports'
   | 'settings'
   | 'activity'
-  | 'database'
   | 'pricing';
 
 interface SidebarProps {
@@ -79,8 +77,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab }) => 
       title: 'ADMINISTRATION',
       items: [
         { id: 'settings' as NavigationTab, label: 'Business Settings', icon: Settings },
-        { id: 'activity' as NavigationTab, label: 'Audit Trail', icon: History },
-        { id: 'database' as NavigationTab, label: 'Database Structure', icon: Database }
+        { id: 'activity' as NavigationTab, label: 'Audit Trail', icon: History }
       ]
     }
   ];

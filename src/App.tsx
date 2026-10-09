@@ -15,7 +15,6 @@ import { CustomerLedgerView } from './views/CustomerLedgerView';
 import { ReportsView } from './views/ReportsView';
 import { SettingsView } from './views/SettingsView';
 import { AuditActivityView } from './views/AuditActivityView';
-import { DatabaseStructureView } from './views/DatabaseStructureView';
 import { Modal } from './components/common/Modal';
 import { InvoicePrintView } from './components/invoice/InvoicePrintView';
 import { LoginView } from './views/LoginView';
@@ -170,8 +169,6 @@ export default function App() {
             {currentTab === 'activity' && <AuditActivityView />}
 
             {currentTab === 'pricing' && <CustomerPricingView />}
-
-            {currentTab === 'database' && <DatabaseStructureView />}
           </div>
         </main>
       </div>
