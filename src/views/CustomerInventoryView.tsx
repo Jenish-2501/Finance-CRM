@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useAccountingStore } from '../store/accountingStore';
+import { isHoldingsRowFullyBilled, getMovementBillingStatus, roundCurrency } from '../utils/calculations';
 import {
   Truck,
   RotateCcw,
@@ -27,6 +28,8 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
     products,
     uoms,
     customerInventoryMovements,
+    invoices,
+    invoiceAllocations,
     dispatchBatchInventoryToCustomer,
     createCustomerReturn,
     getCustomerInventorySummary,
@@ -287,6 +290,14 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
             </div>
 
             <div className="flex items-center gap-2">
+              <button
+                onClick={() => handleOpenDispatch(effectiveCustomerId)}
+                className="px-3 py-1.5 text-xs font-semibold bg-neutral-900 text-white rounded hover:bg-neutral-800 flex items-center gap-1.5"
+                title="Dispatch stock to this client with Delivery Challan"
+              >
+                <Truck className="w-3.5 h-3.5" />
+                <span>New Dispatch</span>
+              </button>
               {onOpenBillingForCustomer && (
                 <button
                                 onClick={() => onOpenBillingForCustomer(effectiveCustomerId)}
@@ -358,29 +369,33 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
                         </td>
                         <td className="py-3 px-4 text-right">
                           <div className="flex justify-end items-center gap-1.5">
-                            <button
-                              onClick={() => handleOpenDispatch(effectiveCustomerId, item.productId)}
-                              className="px-2.5 py-1 text-[11px] font-semibold bg-neutral-900 text-white rounded hover:bg-neutral-800 flex items-center gap-1 shadow-2xs cursor-pointer"
-                              title="Dispatch stock to this client with Delivery Challan"
-                            >
-                              <Truck className="w-3 h-3 text-neutral-300" />
-                              <span>Dispatch</span>
-                            </button>
-                            <button
-                              onClick={() => handleOpenReturn(effectiveCustomerId, item.productId)}
-                              className="px-2 py-1 text-[11px] text-neutral-700 bg-white border border-neutral-300 rounded hover:bg-neutral-100"
-                              title="Process return from this client site"
-                            >
-                              Return
-                            </button>
-                            {onOpenBillingForCustomer && item.unbilledQuantity > 0 && (
-                              <button
-                  onClick={() => onOpenBillingForCustomer(effectiveCustomerId)}
-                                className="px-2 py-1 text-[11px] font-medium bg-emerald-700 text-white rounded hover:bg-emerald-800"
-                                title="Open billing allocation"
+                            {isHoldingsRowFullyBilled(item.billedQuantity, item.unbilledQuantity) ? (
+                              <span
+                                className="inline-flex items-center gap-1 text-[11px] font-mono font-bold text-emerald-800 bg-emerald-50 border border-emerald-300 px-2.5 py-1 rounded"
+                                title="Fully billed — returns are not allowed on billed stock"
                               >
-                                Bill
-                              </button>
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                                <span>Billed</span>
+                              </span>
+                            ) : (
+                              <>
+                                <button
+                                  onClick={() => handleOpenReturn(effectiveCustomerId, item.productId)}
+                                  className="px-2 py-1 text-[11px] text-neutral-700 bg-white border border-neutral-300 rounded hover:bg-neutral-100"
+                                  title="Process return from this client site"
+                                >
+                                  Return
+                                </button>
+                                {onOpenBillingForCustomer && item.unbilledQuantity > 0 && (
+                                  <button
+                                    onClick={() => onOpenBillingForCustomer(effectiveCustomerId)}
+                                    className="px-2 py-1 text-[11px] font-medium bg-emerald-700 text-white rounded hover:bg-emerald-800"
+                                    title="Open billing allocation"
+                                  >
+                                    Bill
+                                  </button>
+                                )}
+                              </>
                             )}
                           </div>
                         </td>
@@ -409,6 +424,7 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
                   <th scope="col" className="py-3 px-3 text-right">Quantity</th>
                   <th scope="col" className="py-3 px-3">Challan / Transporter</th>
                   <th scope="col" className="py-3 px-3 text-center">Delivery Challan</th>
+                  <th scope="col" className="py-3 px-3 text-center">Billing Status</th>
                   <th scope="col" className="py-3 px-4 text-neutral-500">Created By</th>
                 </tr>
               </thead>
@@ -418,6 +434,19 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
                   const prod = products[mov.product_id];
                   const uom = uoms[mov.unit_id];
                   const isDispatch = mov.movement_type === 'DISPATCH' || mov.movement_type === 'ADJUSTMENT_IN';
+                  // Non-cancelled allocations against this exact dispatch movement
+                  const allocatedQty = isDispatch
+                    ? roundCurrency(
+                        Object.values(invoiceAllocations)
+                          .filter(
+                            (a) =>
+                              a.customer_inventory_movement_id === mov.id &&
+                              invoices[a.invoice_id]?.status !== 'CANCELLED'
+                          )
+                          .reduce((sum, a) => sum + a.allocated_quantity, 0)
+                      )
+                    : 0;
+                  const billingStatus = isDispatch ? getMovementBillingStatus(mov.quantity, allocatedQty) : null;
 
                   return (
                     <tr key={mov.id} className="hover:bg-neutral-50/70 font-mono text-[11px]">
@@ -467,6 +496,18 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
                           </button>
                         ) : (
                           <span className="text-[10px] font-mono text-neutral-400">Return Slip</span>
+                        )}
+                      </td>
+
+                      <td className="py-3 px-3 text-center">
+                        {!billingStatus ? (
+                          <span className="text-[10px] font-mono text-neutral-400">—</span>
+                        ) : billingStatus === 'BILLED' ? (
+                          <Badge variant="success">Billed</Badge>
+                        ) : billingStatus === 'PARTIAL' ? (
+                          <Badge variant="warning">Partial</Badge>
+                        ) : (
+                          <Badge variant="neutral">Unbilled</Badge>
                         )}
                       </td>
 

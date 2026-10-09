@@ -282,8 +282,7 @@ export function calculateInvoiceOutstanding(
 
 /**
  * Converts a numeric amount to Indian currency words representation.
- */
-export function numberToWordsINR(amount: number): string {
+ */export function numberToWordsINR(amount: number): string {
   if (isNaN(amount) || amount === 0) return 'Rupees Zero Only';
   const absAmount = Math.floor(Math.abs(amount));
 
@@ -319,5 +318,30 @@ export function numberToWordsINR(amount: number): string {
   if (hundredPart > 0) parts.push(convertThreeDigits(hundredPart));
 
   return `Rupees ${parts.join(' ')} Only`.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Holdings-row billing state for consignment quick actions. A row is BILLED
+ * only when something was actually billed and nothing billable remains — then
+ * no Return is possible (billed goods can't come back as consignment returns)
+ * and the row shows a Billed badge instead of action buttons.
+ */
+export function isHoldingsRowFullyBilled(billedQuantity: number, unbilledQuantity: number): boolean {
+  return billedQuantity > 0 && unbilledQuantity <= 0;
+}
+
+export type MovementBillingStatus = 'BILLED' | 'PARTIAL' | 'UNBILLED';
+
+/**
+ * Per-dispatch-movement billing status from allocated (non-cancelled) quantity.
+ * Both quantities are in the movement's own unit, so direct comparison is valid.
+ */
+export function getMovementBillingStatus(
+  movementQuantity: number,
+  allocatedQuantity: number
+): MovementBillingStatus {
+  if (allocatedQuantity >= movementQuantity && movementQuantity > 0) return 'BILLED';
+  if (allocatedQuantity > 0) return 'PARTIAL';
+  return 'UNBILLED';
 }
 
