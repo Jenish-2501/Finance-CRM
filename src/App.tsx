@@ -17,6 +17,7 @@ import { SettingsView } from './views/SettingsView';
 import { AuditActivityView } from './views/AuditActivityView';
 import { AppSettingsView } from './views/AppSettingsView';
 import { Modal } from './components/common/Modal';
+import { AppShell, ThemeProvider } from './components/ui';
 import { InvoicePrintView } from './components/invoice/InvoicePrintView';
 import { LoginView } from './views/LoginView';
 
@@ -96,22 +97,16 @@ export default function App() {
     : [];
 
   if (!isAuthenticated) {
-    return <LoginView onLogin={handleLogin} />;
+    return (
+      <ThemeProvider>
+        <LoginView onLogin={handleLogin} />
+      </ThemeProvider>
+    );
   }
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-neutral-100 text-neutral-900 font-sans">
-      {/* Persistent Left Sidebar */}
-      <Sidebar currentTab={currentTab} onSelectTab={(tab) => setCurrentTab(tab)} />
-
-      {/* Main App Layout */}
-      <div className="flex flex-col flex-1 h-full min-w-0 overflow-hidden">
-        {/* Top Header */}
-        <Header onLogout={handleLogout} />
-
-        {/* Scrollable View Container */}
-        <main className="flex-1 overflow-y-auto p-6">
-          <div className="max-w-7xl mx-auto">
+    <ThemeProvider>
+    <AppShell sidebar={<Sidebar currentTab={currentTab} onSelectTab={(tab) => setCurrentTab(tab)} />} header={<Header onLogout={handleLogout} />}>
             {currentTab === 'dashboard' && (
               <DashboardView
                 onNavigate={(tab) => setCurrentTab(tab as NavigationTab)}
@@ -172,9 +167,7 @@ export default function App() {
             {currentTab === 'pricing' && <CustomerPricingView />}
 
             {currentTab === 'app-settings' && <AppSettingsView />}
-          </div>
-        </main>
-      </div>
+    </AppShell>
 
       {/* Global Invoice Preview Modal */}
       {previewInvoice && (
@@ -201,6 +194,6 @@ export default function App() {
           />
         </Modal>
       )}
-    </div>
+    </ThemeProvider>
   );
 }

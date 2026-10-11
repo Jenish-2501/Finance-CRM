@@ -75,8 +75,10 @@ function tempDir(prefix: string): string {
   fs.mkdirSync(dbDir, { recursive: true });
   const Database = (await import('better-sqlite3')).default;
   const legacy = new Database(path.join(dbDir, 'application.db'));
+  // Faithful pre-migration v1 customers shape (mirrors 0001_initial.ts):
+  // every released database carries email/state_code until v11 drops them.
   legacy.exec(
-    "CREATE TABLE customers (id TEXT PRIMARY KEY, customer_name TEXT NOT NULL); INSERT INTO customers (id, customer_name) VALUES ('cust-old', 'Old Customer')"
+    "CREATE TABLE customers (id TEXT PRIMARY KEY, customer_name TEXT NOT NULL, pan TEXT NOT NULL, gst_number TEXT NOT NULL, email TEXT NOT NULL, mobile TEXT NOT NULL, address TEXT NOT NULL, city TEXT NOT NULL, state TEXT NOT NULL, country TEXT NOT NULL, postal_code TEXT NOT NULL, state_code TEXT NOT NULL, bank_details TEXT, credit_limit REAL, is_active INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL); INSERT INTO customers (id, customer_name, pan, gst_number, email, mobile, address, city, state, country, postal_code, state_code, is_active, created_at, updated_at) VALUES ('cust-old', 'Old Customer', 'AAAAA0000A', '24AAAAA0000A1Z5', 'old@example.com', '9000000000', 'A', 'Surat', 'Gujarat', 'India', '395001', '24', 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
   );
   legacy.close();
   delete process.env.VITE_DEV_SERVER_URL;
@@ -93,7 +95,7 @@ function tempDir(prefix: string): string {
   );
   assert.ok(!tables.has('users'), 'legacy users table dropped (single-owner)');
   const vers = getSqlite().prepare('SELECT version FROM _migrations ORDER BY version').all();
-  assert.deepEqual(vers, [{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }]);
+  assert.deepEqual(vers, [{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 }, { version: 14 }]);
   closeDatabase();
   console.log('D-5 legacy adoption + update preservation: OK');
 }

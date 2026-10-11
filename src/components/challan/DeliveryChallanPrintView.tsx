@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAccountingStore } from '../../store/accountingStore';
-import { formatINR, numberToWordsINR, roundCurrency } from '../../utils/calculations';
+import { formatINR, numberToWordsINR, roundCurrency, getCustomerStateCode } from '../../utils/calculations';
 import { buildChallanPdf, docToBase64 } from '../../utils/pdfDocuments';
 import { Printer, X, Download, RefreshCw } from 'lucide-react';
 import { Badge } from '../common/Badge';
+import { Alert, Button, Card, Input, Label, Select, Toolbar } from '../ui';
 
 export type ChallanCopyType = 'ORIGINAL' | 'DUPLICATE' | 'TRIPLICATE';
 
@@ -29,16 +30,21 @@ export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> =
 
   const [copyType, setCopyType] = useState<ChallanCopyType>('ORIGINAL');
 
-  // Find all movements associated with this challan or movement
+  // Find all movements associated with this challan or movement.
+  // Grouping key is the document header when present (one document = one challan,
+  // even across rows); legacy rows without a header fall back to the old
+  // (customer, reference) grouping so history still prints.
   const movements = useMemo(() => {
     const allMovs = Object.values(customerInventoryMovements);
+    const keyOf = (m: (typeof allMovs)[number]) =>
+      m.document_id || `${m.customer_id}::${m.reference_id}`;
     if (movementId) {
       const target = customerInventoryMovements[movementId];
       if (target) {
+        const key = keyOf(target);
         const grouped = allMovs.filter(
           (m) =>
-            m.reference_id === target.reference_id &&
-            m.customer_id === target.customer_id &&
+            keyOf(m) === key &&
             (m.movement_type === 'DISPATCH' || m.movement_type === 'ADJUSTMENT_IN')
         );
         return grouped.length > 0 ? grouped : [target];
@@ -50,7 +56,14 @@ export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> =
           m.reference_id === challanReference &&
           (m.movement_type === 'DISPATCH' || m.movement_type === 'ADJUSTMENT_IN')
       );
-      if (matches.length > 0) return matches;
+      if (matches.length > 0) {
+        const key = keyOf(matches[0]);
+        return allMovs.filter(
+          (m) =>
+            keyOf(m) === key &&
+            (m.movement_type === 'DISPATCH' || m.movement_type === 'ADJUSTMENT_IN')
+        );
+      }
     }
     // Fallback: newest dispatch
     const dispatches = allMovs.filter((m) => m.movement_type === 'DISPATCH');
@@ -207,11 +220,11 @@ export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> =
   if (!primaryMovement || !customer) {
     return (
       <div className="p-8 text-center space-y-3">
-        <p className="text-sm text-neutral-600">No delivery challan records found for the requested dispatch.</p>
+        <p className="text-sm text-muted-foreground">No delivery challan records found for the requested dispatch.</p>
         {onClose && (
           <button
             onClick={onClose}
-            className="px-4 py-2 bg-neutral-900 text-white rounded text-xs font-semibold"
+            className="px-4 py-2 bg-primary text-primary-foreground rounded text-xs font-semibold"
           >
             Close
           </button>
@@ -242,13 +255,11 @@ export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> =
       productName: prod?.product_name || 'Industrial Material',
       sku: prod?.sku || 'SKU-GEN',
       description: prod?.description || '',
-      hsnCode: prod?.hsn_code || '7214',
       quantity: mov.quantity,
       unitCode: uom?.code || 'PCS',
       indicativePrice: unitPrice,
       isCustomPrice: resolved.isCustom,
       lineTotal,
-      notes: mov.notes
     };
   });
 
@@ -266,20 +277,20 @@ export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> =
   return (
     <div className="space-y-6">
       {/* Top Action Bar (hidden when printing) */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-neutral-100 border border-neutral-300 rounded-lg no-print">
+      <Toolbar className="flex-col sm:flex-row sm:items-center gap-3">
         <div className="flex items-center gap-3">
           <Badge variant="neutral" size="md">
             Delivery Challan #{primaryMovement.reference_id}
           </Badge>
-          <div className="flex items-center gap-1 bg-white border border-neutral-300 rounded p-0.5">
+          <div className="flex items-center gap-1 bg-card border border-input rounded-md p-0.5">
             {(['ORIGINAL', 'DUPLICATE', 'TRIPLICATE'] as ChallanCopyType[]).map((type) => (
               <button
                 key={type}
                 onClick={() => setCopyType(type)}
                 className={`px-2.5 py-1 text-[11px] font-mono rounded transition-colors ${
                   copyType === type
-                    ? 'bg-neutral-900 text-white font-semibold'
-                    : 'text-neutral-600 hover:bg-neutral-100'
+                    ? 'bg-primary text-primary-foreground font-semibold'
+                    : 'text-muted-foreground hover:bg-muted'
                 }`}
               >
                 {type === 'ORIGINAL' ? 'Consignee Copy' : type === 'DUPLICATE' ? 'Transporter' : 'Consignor'}
@@ -289,49 +300,36 @@ export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> =
         </div>
 
         <div className="flex items-center gap-2">
-          <button
-            onClick={handleDownloadPDF}
-            disabled={downloading}
-            aria-label="Download challan as PDF file"
-            className="px-4 py-2 text-xs font-semibold bg-white text-neutral-800 border border-neutral-300 rounded hover:bg-neutral-50 transition-colors flex items-center gap-2 shadow-2xs cursor-pointer disabled:opacity-60"
-          >
-            <Download className="w-4 h-4 text-neutral-600" aria-hidden="true" />
+          <Button variant="secondary" size="sm" onClick={handleDownloadPDF} disabled={downloading} aria-label="Download challan as PDF file" className="px-4 py-2">
+            <Download className="w-4 h-4 text-muted-foreground" aria-hidden="true" />
             <span>{downloading ? 'Preparing PDF…' : 'Download PDF'}</span>
-          </button>
+          </Button>
 
-          <button
-            onClick={handlePrint}
-            className="px-4 py-2 text-xs font-semibold bg-neutral-900 text-white rounded hover:bg-neutral-800 transition-colors flex items-center gap-2 shadow-2xs cursor-pointer"
-          >
-            <Printer className="w-4 h-4 text-white" />
+          <Button variant="primary" size="sm" onClick={handlePrint} className="px-4 py-2">
+            <Printer className="w-4 h-4" />
             <span>Print Challan / Save PDF</span>
-          </button>
+          </Button>
 
           {onClose && (
-            <button
-              onClick={onClose}
-              aria-label="Close challan preview"
-              className="p-2 text-neutral-500 hover:text-neutral-900 hover:bg-neutral-200 rounded transition-colors"
-              title="Close Challan"
-            >
+            <Button variant="icon-ghost" size="icon" onClick={onClose} aria-label="Close challan preview" title="Close Challan">
               <X className="w-4 h-4" aria-hidden="true" />
-            </button>
+            </Button>
           )}
         </div>
-      </div>
+      </Toolbar>
 
       {/* Printer connection bar (hidden when printing) */}
       {canUsePrintBridge && (
-        <div className="p-4 bg-white border border-neutral-200 rounded-lg shadow-2xs no-print text-xs space-y-3">
+        <Card className="p-4 no-print text-xs space-y-3 shadow-2xs">
           <div className="flex flex-col sm:flex-row sm:items-end gap-3">
             <div className="flex-1 min-w-[220px]">
-              <label className="block font-semibold text-neutral-700 mb-1">Printer</label>
+              <Label className="mb-1">Printer</Label>
               <div className="flex gap-2">
-                <select
+                <Select
                   value={selectedPrinter}
                   onChange={(e) => handleSelectPrinter(e.target.value)}
                   disabled={printersLoading || printing}
-                  className="flex-1 p-2 border border-neutral-300 rounded bg-white text-neutral-900 font-medium disabled:opacity-50"
+                  className="flex-1 font-medium disabled:opacity-50"
                 >
                   {printers.length === 0 ? (
                     <option value="">— No printers found —</option>
@@ -342,68 +340,67 @@ export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> =
                       </option>
                     ))
                   )}
-                </select>
-                <button
+                </Select>
+                <Button
+                  variant="secondary"
+                  size="icon"
                   onClick={() => void loadPrinters()}
                   disabled={printersLoading}
                   title="Refresh printer list"
-                  className="px-2.5 border border-neutral-300 rounded bg-white hover:bg-neutral-50 disabled:opacity-40"
+                  className="px-2.5 disabled:opacity-40"
                 >
-                  <RefreshCw className={`w-4 h-4 text-neutral-600 ${printersLoading ? 'animate-spin' : ''}`} />
-                </button>
+                  <RefreshCw className={`w-4 h-4 text-muted-foreground ${printersLoading ? 'animate-spin' : ''}`} />
+                </Button>
               </div>
             </div>
 
             <div className="w-24">
-              <label className="block font-semibold text-neutral-700 mb-1">Copies</label>
-              <input
+              <Label className="mb-1">Copies</Label>
+              <Input
                 type="number"
                 min={1}
                 max={99}
                 value={copies}
                 onChange={(e) => setCopies(Number(e.target.value))}
                 disabled={printing}
-                className="w-full p-2 border border-neutral-300 rounded font-mono text-center disabled:opacity-50"
+                className="w-full font-mono text-center disabled:opacity-50"
               />
             </div>
 
             <div className="flex gap-2">
-              <button
+              <Button
+                variant="primary"
+                size="md"
                 onClick={() => void handleDirectPrint()}
                 disabled={printing || !selectedPrinter}
-                className="px-4 py-2 font-semibold bg-neutral-900 text-white rounded hover:bg-neutral-800 transition-colors flex items-center gap-2 disabled:opacity-50"
+                className="px-4 py-2 disabled:opacity-50"
               >
-                <Printer className="w-4 h-4 text-white" />
+                <Printer className="w-4 h-4" />
                 <span>{printing ? 'Printing…' : 'Print Challan'}</span>
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="secondary"
+                size="md"
                 onClick={() => void handleSystemDialogPrint()}
                 disabled={printing}
                 title="Open the system print dialog (preview & settings)"
-                className="px-4 py-2 font-medium bg-white text-neutral-800 border border-neutral-300 rounded hover:bg-neutral-50 transition-colors disabled:opacity-50"
+                className="px-4 py-2 disabled:opacity-50"
               >
                 <span>System Dialog</span>
-              </button>
+              </Button>
             </div>
           </div>
 
           {printStatus && (
-            <div
-              role="status"
-              className={`p-2.5 rounded border text-xs ${
-                printStatus.kind === 'success'
-                  ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
-                  : 'bg-rose-50 border-rose-200 text-rose-900'
-              }`}
-            >
+            <Alert tone={printStatus.kind === 'success' ? 'success' : 'destructive'}>
               {printStatus.text}
-            </div>
+            </Alert>
           )}
-        </div>
+        </Card>
       )}
 
       {/* Printable Challan Document Container */}
-      <div className="bg-white border border-neutral-300 rounded-lg shadow-sm p-8 sm:p-10 max-w-4xl mx-auto text-neutral-900 print-container print:p-0 print:border-none print:shadow-none">
+      <div className="bg-card border border-input rounded-lg shadow-sm p-8 sm:p-10 max-w-4xl mx-auto text-foreground print-container print:p-0 print:border-none print:shadow-none">
         {/* Document Header */}
         <div className="border-b-2 border-neutral-900 pb-4 mb-4">
           <div className="flex flex-col sm:flex-row justify-between items-start gap-4">
@@ -446,7 +443,7 @@ export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> =
         </div>
 
         {/* Challan Metadata Bar */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-3 bg-neutral-50 border border-neutral-200 rounded text-xs mb-5 font-mono">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 p-3 bg-neutral-50 border border-neutral-200 rounded text-xs mb-5 font-mono">
           <div>
             <span className="text-neutral-500 block text-[10px] uppercase">Challan Number:</span>
             <span className="font-bold text-neutral-900 text-sm">{primaryMovement.reference_id}</span>
@@ -460,13 +457,6 @@ export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> =
           <div>
             <span className="text-neutral-500 block text-[10px] uppercase">Time of Removal:</span>
             <span className="text-neutral-800">{timeOfRemoval}</span>
-          </div>
-
-          <div>
-            <span className="text-neutral-500 block text-[10px] uppercase">Nature of Movement:</span>
-            <span className="font-semibold text-neutral-900">
-              {primaryMovement.dispatch_purpose || 'Consignment Transfer / Holding'}
-            </span>
           </div>
         </div>
 
@@ -501,45 +491,20 @@ export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> =
             </p>
             <div className="font-mono text-[11px] text-neutral-700 pt-1 space-y-0.5">
               <div><strong>GSTIN / UIN:</strong> {customer.gst_number}</div>
-              <div><strong>State / Code:</strong> {customer.state} (Code: {customer.state_code})</div>
-              <div><strong>Contact:</strong> {customer.mobile} • {customer.email}</div>
+              <div><strong>State / Code:</strong> {customer.state} (Code: {getCustomerStateCode(customer)})</div>
+              <div><strong>Contact:</strong> {customer.mobile}</div>
             </div>
           </div>
         </div>
 
-        {/* Transportation & Logistics Box */}
+        {/* Place of Supply Box */}
         <div className="p-3 bg-neutral-50/80 border border-neutral-200 rounded mb-6 text-xs font-mono">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div>
-              <span className="text-neutral-500 block text-[10px] uppercase">Vehicle Number:</span>
-              <span className="font-bold text-neutral-900">
-                {primaryMovement.vehicle_number || 'GJ-05-BX-4921 (Authorized)'}
-              </span>
-            </div>
-            <div>
-              <span className="text-neutral-500 block text-[10px] uppercase">Transporter Name:</span>
-              <span className="text-neutral-800">
-                {primaryMovement.transporter_name || 'Direct Road Logistics / Transport'}
-              </span>
-            </div>
-            <div>
-              <span className="text-neutral-500 block text-[10px] uppercase">E-Way Bill Number:</span>
-              <span className="text-neutral-800">
-                {primaryMovement.eway_bill_number || 'EWB-2026-N/A'}
-              </span>
-            </div>
-            <div>
-              <span className="text-neutral-500 block text-[10px] uppercase">Place of Supply:</span>
-              <span className="font-semibold text-neutral-900">
-                {customer.city}, {customer.state}
-              </span>
-            </div>
+          <div>
+            <span className="text-neutral-500 block text-[10px] uppercase">Place of Supply:</span>
+            <span className="font-semibold text-neutral-900">
+              {customer.city}, {customer.state}
+            </span>
           </div>
-          {primaryMovement.notes && (
-            <div className="mt-2 pt-2 border-t border-neutral-200 text-[11px] text-neutral-600 font-sans">
-              <strong>Instructions / Site Remarks:</strong> {primaryMovement.notes}
-            </div>
-          )}
         </div>
 
         {/* Dispatched Items Table */}
@@ -551,7 +516,6 @@ export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> =
                 <th scope="col" className="py-2.5 px-3 text-center w-10">#</th>
                 <th scope="col" className="py-2.5 px-3">Description of Goods</th>
                 <th scope="col" className="py-2.5 px-3 font-mono">SKU / Code</th>
-                <th scope="col" className="py-2.5 px-3 font-mono">HSN Code</th>
                 <th scope="col" className="py-2.5 px-3 text-right font-mono">Dispatched Qty</th>
                 <th scope="col" className="py-2.5 px-3 font-mono">UOM</th>
                 <th scope="col" className="py-2.5 px-3 text-right font-mono">Agreed Rate</th>
@@ -569,7 +533,6 @@ export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> =
                     )}
                   </td>
                   <td className="py-2.5 px-3 font-mono text-neutral-600">{row.sku}</td>
-                  <td className="py-2.5 px-3 font-mono text-neutral-600">{row.hsnCode}</td>
                   <td className="py-2.5 px-3 text-right font-mono font-bold text-neutral-900 text-sm">
                     {row.quantity}
                   </td>
@@ -588,7 +551,7 @@ export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> =
             </tbody>
             <tfoot>
               <tr className="border-t-2 border-neutral-300 bg-neutral-50 font-mono font-bold text-neutral-900 text-xs">
-                <td colSpan={4} className="py-3 px-3 text-right uppercase">
+                <td colSpan={3} className="py-3 px-3 text-right uppercase">
                   Total Dispatched Quantity &amp; Value:
                 </td>
                 <td className="py-3 px-3 text-right text-sm font-bold text-neutral-950">

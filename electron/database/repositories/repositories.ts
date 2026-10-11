@@ -22,9 +22,11 @@ export const StockReceiptRepository = makeRepo('stock_receipts');
 export const StockReceiptItemRepository = makeRepo('stock_receipt_items');
 export const InventoryMovementRepository = makeRepo('inventory_movements');
 export const CustomerInventoryMovementRepository = makeRepo('customer_inventory_movements');
+export const DispatchDocumentRepository = makeRepo('dispatch_documents');
 export const InvoiceRepository = makeRepo('invoices');
 export const InvoiceItemRepository = makeRepo('invoice_items');
 export const InvoiceAllocationRepository = makeRepo('invoice_allocations');
+export const InvoiceSeriesRepository = makeRepo('invoice_series');
 export const InvoicePaymentRepository = makeRepo('invoice_payments');
 export const AuditLogRepository = makeRepo('audit_logs');
 
@@ -41,9 +43,11 @@ export const Repositories = {
   stockReceiptItems: StockReceiptItemRepository,
   inventoryMovements: InventoryMovementRepository,
   customerInventoryMovements: CustomerInventoryMovementRepository,
+  dispatchDocuments: DispatchDocumentRepository,
   invoices: InvoiceRepository,
   invoiceItems: InvoiceItemRepository,
   invoiceAllocations: InvoiceAllocationRepository,
+  invoiceSeries: InvoiceSeriesRepository,
   invoicePayments: InvoicePaymentRepository,
   auditLogs: AuditLogRepository,
 };

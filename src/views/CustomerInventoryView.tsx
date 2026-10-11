@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { Modal } from '../components/common/Modal';
 import { Badge } from '../components/common/Badge';
+import { Button, Card, CardHeader, PageHeader, TableShell, Table, THead, TBody, TR, TH, TD, Tabs, Alert, Input, Label, Select } from '../components/ui';
 import { CustomerPicker, firstCustomerId } from '../components/common/CustomerPicker';
 import { DeliveryChallanPrintView } from '../components/challan/DeliveryChallanPrintView';
 
@@ -32,6 +33,7 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
     invoiceAllocations,
     dispatchBatchInventoryToCustomer,
     createCustomerReturn,
+    suggestNextDocumentNumber,
     getCustomerInventorySummary,
     getCurrentCompanyStock
   } = useAccountingStore();
@@ -46,12 +48,7 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
   // Dispatch Form State
   const [dispatchForm, setDispatchForm] = useState({
     customerId: 'cust-1',
-    referenceId: `CH-${Math.floor(1000 + Math.random() * 9000)}`,
-    vehicleNumber: 'GJ-05-BX-4921',
-    transporterName: 'ABC Logistics / Road Transport',
-    ewayBillNumber: '',
-    dispatchPurpose: 'Consignment Transfer (Rule 55)',
-    notes: 'Direct site consignment dispatch',
+    referenceId: '',
     items: [
       {
         productId: 'prod-1',
@@ -67,8 +64,7 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
     productId: 'prod-1',
     unitId: 'uom-pcs',
     quantity: 10,
-    referenceId: `RET-${Math.floor(100 + Math.random() * 900)}`,
-    notes: 'Surplus material return'
+    referenceId: ''
   });
 
   // Fall back to the first real customer when a stored id is gone
@@ -86,14 +82,10 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
   const handleOpenDispatch = (cId?: string, pId?: string) => {
     setOperationError('');
     const targetProd = pId ? products[pId] : allProducts[0];
+    const targetCustomer = cId || effectiveCustomerId;
     setDispatchForm({
-      customerId: cId || effectiveCustomerId,
-      referenceId: `CH-${Math.floor(1000 + Math.random() * 9000)}`,
-      vehicleNumber: 'GJ-05-BX-4921',
-      transporterName: 'ABC Logistics / Road Transport',
-      ewayBillNumber: '',
-      dispatchPurpose: 'Consignment Transfer (Rule 55)',
-      notes: 'Site delivery consignment',
+      customerId: targetCustomer,
+      referenceId: suggestNextDocumentNumber(targetCustomer, 'DISPATCH'),
       items: [
         {
           productId: targetProd?.id || 'prod-1',
@@ -130,13 +122,13 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
 
   const handleOpenReturn = (cId?: string, pId?: string) => {
     setOperationError('');
+    const targetCustomer = cId || effectiveCustomerId;
     setReturnForm({
-      customerId: cId || effectiveCustomerId,
+      customerId: targetCustomer,
       productId: pId || allProducts[0]?.id || 'prod-1',
       unitId: products[pId || allProducts[0]?.id || 'prod-1']?.primary_unit_id || 'uom-pcs',
       quantity: 10,
-      referenceId: `RET-${Math.floor(100 + Math.random() * 900)}`,
-      notes: 'Surplus site return'
+      referenceId: suggestNextDocumentNumber(targetCustomer, 'RETURN')
     });
     setIsReturnModalOpen(true);
   };
@@ -153,11 +145,6 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
     const res = dispatchBatchInventoryToCustomer({
       customerId: effectiveDispatchCustomerId,
       referenceId: dispatchForm.referenceId.trim(),
-      vehicleNumber: dispatchForm.vehicleNumber.trim(),
-      transporterName: dispatchForm.transporterName.trim(),
-      ewayBillNumber: dispatchForm.ewayBillNumber.trim(),
-      dispatchPurpose: dispatchForm.dispatchPurpose,
-      notes: dispatchForm.notes.trim(),
       items: dispatchForm.items.map((it) => ({
         productId: it.productId,
         unitId: it.unitId,
@@ -185,8 +172,7 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
       productId: returnForm.productId,
       unitId: returnForm.unitId,
       quantity: Number(returnForm.quantity),
-      referenceId: returnForm.referenceId,
-      notes: returnForm.notes
+      referenceId: returnForm.referenceId
     });
 
     if (!res.success) {
@@ -199,85 +185,42 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
   return (
     <div className="space-y-6">
       {/* Header & Controls */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 bg-white border border-neutral-200 rounded-lg shadow-2xs">
-        <div>
-          <h1 className="text-xl font-bold tracking-tight text-neutral-950">Customer Inventory &amp; Consignments</h1>
-          <p className="text-xs text-neutral-500 font-mono mt-0.5">
-            Atomic stock dispatch/return • Explicit unbilled vs. holding reconciliation
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => handleOpenReturn()}
-            className="px-3 py-1.5 text-xs font-medium text-neutral-700 bg-white border border-neutral-300 rounded hover:bg-neutral-50 flex items-center gap-1.5"
-          >
-            <RotateCcw className="w-3.5 h-3.5 text-neutral-500" />
-            <span>Record Customer Return</span>
-          </button>
-
-          <button
-            onClick={() => handleOpenDispatch()}
-            className="px-3.5 py-1.5 text-xs font-semibold bg-neutral-900 text-white rounded hover:bg-neutral-800 transition-colors flex items-center gap-1.5 shadow-2xs"
-          >
-            <Truck className="w-3.5 h-3.5" />
-            <span>Dispatch to Customer</span>
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        title="Customer Inventory & Consignments"
+        subtitle="Atomic stock dispatch/return • Explicit unbilled vs. holding reconciliation"
+        actions={
+          <>
+            <Button variant="secondary" size="sm" onClick={() => handleOpenReturn()}>
+              <RotateCcw className="w-3.5 h-3.5 text-muted-foreground" />
+              <span>Record Customer Return</span>
+            </Button>
+            <Button variant="primary" size="md" onClick={() => handleOpenDispatch()}>
+              <Truck className="w-3.5 h-3.5" />
+              <span>Dispatch to Customer</span>
+            </Button>
+          </>
+        }
+      />
 
       {/* Tabs */}
-      <div
-        role="tablist"
-        aria-label="Customer inventory views"
-        onKeyDown={(e) => {
-          if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(e.key)) return;
-          e.preventDefault();
-          const tabs = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]'));
-          const current = tabs.indexOf(document.activeElement as HTMLElement);
-          const nextIndex =
-            e.key === 'ArrowRight' ? (current + 1) % tabs.length
-            : e.key === 'ArrowLeft' ? (current - 1 + tabs.length) % tabs.length
-            : e.key === 'Home' ? 0 : tabs.length - 1;
-          tabs[nextIndex]?.focus();
-          tabs[nextIndex]?.click();
-        }}
-        className="flex border-b border-neutral-200 gap-6 text-xs font-medium text-neutral-500"
-      >
-        <button
-          role="tab"
-          aria-selected={activeTab === 'holdings'}
-          onClick={() => setActiveTab('holdings')}
-          className={`pb-2.5 transition-colors border-b-2 -mb-px ${
-            activeTab === 'holdings'
-              ? 'border-neutral-900 text-neutral-900 font-semibold'
-              : 'border-transparent hover:text-neutral-800'
-          }`}
-        >
-          Customer Holdings Reconciliation
-        </button>
-        <button
-          role="tab"
-          aria-selected={activeTab === 'movements'}
-          onClick={() => setActiveTab('movements')}
-          className={`pb-2.5 transition-colors border-b-2 -mb-px ${
-            activeTab === 'movements'
-              ? 'border-neutral-900 text-neutral-900 font-semibold'
-              : 'border-transparent hover:text-neutral-800'
-          }`}
-        >
-          Customer Movement Ledger ({allCustomerMovements.length})
-        </button>
-      </div>
+      <Tabs
+        ariaLabel="Customer inventory views"
+        activeId={activeTab}
+        onSelect={(id) => setActiveTab(id as 'holdings' | 'movements')}
+        tabs={[
+          { id: 'holdings', label: 'Customer Holdings Reconciliation' },
+          { id: 'movements', label: 'Customer Movement Ledger', count: allCustomerMovements.length },
+        ]}
+      />
 
       {/* Tab 1: Holdings Reconciliation */}
       {activeTab === 'holdings' && (
         <div className="space-y-4">
           {/* Customer Selector Card */}
-          <div className="p-4 bg-white border border-neutral-200 rounded-lg flex flex-col sm:flex-row items-center justify-between gap-3 shadow-2xs">
+          <Card className="p-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-2xs">
             <div className="flex items-center gap-3 w-full sm:w-auto">
-              <Building className="w-4 h-4 text-neutral-500" />
-              <label className="text-xs font-semibold text-neutral-700 whitespace-nowrap">
+              <Building className="w-4 h-4 text-muted-foreground" />
+              <label className="text-xs font-semibold text-foreground whitespace-nowrap">
                 Select Client Site:
               </label>
               <div className="min-w-[260px]">
@@ -290,145 +233,151 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
             </div>
 
             <div className="flex items-center gap-2">
-              <button
+              <Button
+                variant="primary"
+                size="sm"
                 onClick={() => handleOpenDispatch(effectiveCustomerId)}
-                className="px-3 py-1.5 text-xs font-semibold bg-neutral-900 text-white rounded hover:bg-neutral-800 flex items-center gap-1.5"
                 title="Dispatch stock to this client with Delivery Challan"
               >
                 <Truck className="w-3.5 h-3.5" />
                 <span>New Dispatch</span>
-              </button>
+              </Button>
               {onOpenBillingForCustomer && (
-                <button
-                                onClick={() => onOpenBillingForCustomer(effectiveCustomerId)}
-                  className="px-3 py-1.5 text-xs font-semibold bg-neutral-900 text-white rounded hover:bg-neutral-800 flex items-center gap-1.5"
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => onOpenBillingForCustomer(effectiveCustomerId)}
                 >
                   <FileCheck className="w-3.5 h-3.5" />
                   <span>Generate Invoice for Unbilled</span>
-                </button>
+                </Button>
               )}
             </div>
-          </div>
+          </Card>
 
           {/* Holdings Breakdown Table */}
-          <div className="bg-white border border-neutral-200 rounded-lg shadow-2xs overflow-hidden">
-            <div className="p-3 border-b border-neutral-200 bg-neutral-50/70 flex justify-between items-center text-xs">
-              <div className="font-semibold text-neutral-800">
+          <TableShell>
+            <CardHeader>
+              <div className="font-semibold text-foreground text-xs">
                 Inventory Held at {customers[effectiveCustomerId]?.customer_name}
               </div>
-              <div className="font-mono text-neutral-500 text-[11px]">
+              <div className="font-mono text-muted-foreground text-[11px]">
                 Rule 56: Current Inventory ≠ Unbilled Inventory (Derived via allocations)
               </div>
-            </div>
+            </CardHeader>
 
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
+              <Table className="text-left border-collapse">
               <caption className="sr-only">Customer consignment holdings reconciliation</caption>
-              <thead>
-                <tr className="border-b border-neutral-200 bg-neutral-50/80 font-mono text-neutral-600 text-[11px]">
-                  <th scope="col" className="py-3 px-4">Product Name</th>
-                    <th scope="col" className="py-3 px-3">SKU</th>
-                    <th scope="col" className="py-3 px-3 text-right">Dispatched In</th>
-                    <th scope="col" className="py-3 px-3 text-right">Returned Out</th>
-                    <th scope="col" className="py-3 px-3 text-right">Physically Held</th>
-                    <th scope="col" className="py-3 px-3 text-right">Allocated / Billed</th>
-                    <th scope="col" className="py-3 px-3 text-right">Remaining Billable</th>
-                    <th scope="col" className="py-3 px-4 text-right">Quick Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-neutral-200 font-sans">
+              <THead>
+                <TR className="hover:bg-transparent">
+                  <TH scope="col">Product Name</TH>
+                    <TH scope="col">SKU</TH>
+                    <TH scope="col" className="text-right">Dispatched In</TH>
+                    <TH scope="col" className="text-right">Returned Out</TH>
+                    <TH scope="col" className="text-right">Physically Held</TH>
+                    <TH scope="col" className="text-right">Allocated / Billed</TH>
+                    <TH scope="col" className="text-right">Remaining Billable</TH>
+                    <TH scope="col" className="text-right px-4">Quick Actions</TH>
+                </TR>
+              </THead>
+              <TBody>
                   {selectedCustomerSummary.length === 0 ? (
                     <tr>
-                      <td colSpan={8} className="py-8 text-center text-neutral-400">
+                      <TD colSpan={8} className="py-8 text-center text-muted-foreground">
                         No inventory consignments or movements recorded for this customer yet.
-                      </td>
+                      </TD>
                     </tr>
                   ) : (
                     selectedCustomerSummary.map((item) => (
-                      <tr key={item.productId} className="hover:bg-neutral-50/70">
-                        <td className="py-3 px-4 font-semibold text-neutral-900">
+                      <TR key={item.productId}>
+                        <TD className="font-semibold">
                           {item.productName}
-                        </td>
-                        <td className="py-3 px-3 font-mono text-neutral-500 text-[11px]">
+                        </TD>
+                        <TD className="font-mono text-muted-foreground text-[11px]">
                           {item.sku}
-                        </td>
-                        <td className="py-3 px-3 text-right font-mono text-neutral-700">
+                        </TD>
+                        <TD className="text-right font-mono">
                           {item.totalReceived} {item.unitCode}
-                        </td>
-                        <td className="py-3 px-3 text-right font-mono text-neutral-700">
+                        </TD>
+                        <TD className="text-right font-mono">
                           {item.totalReturned} {item.unitCode}
-                        </td>
-                        <td className="py-3 px-3 text-right font-mono font-bold text-neutral-900">
+                        </TD>
+                        <TD className="text-right font-mono font-bold">
                           {item.currentBalance} {item.unitCode}
-                        </td>
-                        <td className="py-3 px-3 text-right font-mono text-emerald-800">
+                        </TD>
+                        <TD className="text-right font-mono text-emerald-800 dark:text-emerald-300">
                           {item.billedQuantity} {item.unitCode}
-                        </td>
-                        <td className="py-3 px-3 text-right font-mono font-bold text-amber-900">
+                        </TD>
+                        <TD className="text-right font-mono font-bold text-amber-900 dark:text-amber-200">
                           {item.unbilledQuantity} {item.unitCode}
-                        </td>
-                        <td className="py-3 px-4 text-right">
+                        </TD>
+                        <TD className="text-right">
                           <div className="flex justify-end items-center gap-1.5">
                             {isHoldingsRowFullyBilled(item.billedQuantity, item.unbilledQuantity) ? (
                               <span
-                                className="inline-flex items-center gap-1 text-[11px] font-mono font-bold text-emerald-800 bg-emerald-50 border border-emerald-300 px-2.5 py-1 rounded"
+                                className="inline-flex items-center gap-1 text-[11px] font-mono font-bold text-emerald-800 dark:text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-1 rounded-md"
                                 title="Fully billed — returns are not allowed on billed stock"
                               >
-                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
                                 <span>Billed</span>
                               </span>
                             ) : (
                               <>
-                                <button
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
                                   onClick={() => handleOpenReturn(effectiveCustomerId, item.productId)}
-                                  className="px-2 py-1 text-[11px] text-neutral-700 bg-white border border-neutral-300 rounded hover:bg-neutral-100"
                                   title="Process return from this client site"
+                                  className="text-[11px] px-2 py-1"
                                 >
                                   Return
-                                </button>
+                                </Button>
                                 {onOpenBillingForCustomer && item.unbilledQuantity > 0 && (
-                                  <button
+                                  <Button
+                                    variant="success"
+                                    size="sm"
                                     onClick={() => onOpenBillingForCustomer(effectiveCustomerId)}
-                                    className="px-2 py-1 text-[11px] font-medium bg-emerald-700 text-white rounded hover:bg-emerald-800"
                                     title="Open billing allocation"
+                                    className="text-[11px] px-2 py-1"
                                   >
                                     Bill
-                                  </button>
+                                  </Button>
                                 )}
                               </>
                             )}
                           </div>
-                        </td>
-                      </tr>
+                        </TD>
+                      </TR>
                     ))
                   )}
-                </tbody>
-              </table>
+                </TBody>
+              </Table>
             </div>
-          </div>
+          </TableShell>
         </div>
       )}
 
       {/* Tab 2: Customer Movement Ledger */}
       {activeTab === 'movements' && (
-        <div className="bg-white border border-neutral-200 rounded-lg shadow-2xs overflow-hidden">
+        <TableShell>
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
+            <Table className="text-left border-collapse">
               <caption className="sr-only">Customer inventory movement ledger</caption>
-              <thead>
-                <tr className="border-b border-neutral-200 bg-neutral-50/80 font-mono text-neutral-600 text-[11px]">
-                  <th scope="col" className="py-3 px-4">Date</th>
-                  <th scope="col" className="py-3 px-3">Customer Entity</th>
-                  <th scope="col" className="py-3 px-3">Product</th>
-                  <th scope="col" className="py-3 px-3">Movement Type</th>
-                  <th scope="col" className="py-3 px-3 text-right">Quantity</th>
-                  <th scope="col" className="py-3 px-3">Challan / Transporter</th>
-                  <th scope="col" className="py-3 px-3 text-center">Delivery Challan</th>
-                  <th scope="col" className="py-3 px-3 text-center">Billing Status</th>
-                  <th scope="col" className="py-3 px-4 text-neutral-500">Created By</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-neutral-200 font-sans">
+              <THead>
+                <TR className="hover:bg-transparent">
+                  <TH scope="col">Date</TH>
+                  <TH scope="col">Customer Entity</TH>
+                  <TH scope="col">Product</TH>
+                  <TH scope="col">Movement Type</TH>
+                  <TH scope="col" className="text-right">Quantity</TH>
+                  <TH scope="col">Challan / Transporter</TH>
+                  <TH scope="col" className="text-center">Delivery Challan</TH>
+                  <TH scope="col" className="text-center">Billing Status</TH>
+                  <TH scope="col">Created By</TH>
+                </TR>
+              </THead>
+              <TBody>
                 {allCustomerMovements.map((mov) => {
                   const cust = customers[mov.customer_id];
                   const prod = products[mov.product_id];
@@ -449,59 +398,57 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
                   const billingStatus = isDispatch ? getMovementBillingStatus(mov.quantity, allocatedQty) : null;
 
                   return (
-                    <tr key={mov.id} className="hover:bg-neutral-50/70 font-mono text-[11px]">
-                      <td className="py-3 px-4 text-neutral-500">
+                    <TR key={mov.id} className="font-mono text-[11px]">
+                      <TD className="text-muted-foreground">
                         {new Date(mov.movement_date).toLocaleDateString()}
-                      </td>
+                      </TD>
 
-                      <td className="py-3 px-3 font-sans font-semibold text-neutral-900">
+                      <TD className="font-sans font-semibold">
                         {cust?.customer_name || 'Client'}
-                      </td>
+                      </TD>
 
-                      <td className="py-3 px-3 font-sans text-neutral-800">
+                      <TD className="font-sans">
                         {prod?.product_name || 'Item'}
-                      </td>
+                      </TD>
 
-                      <td className="py-3 px-3">
+                      <TD>
                         <Badge variant={isDispatch ? 'success' : 'neutral'}>
                           {mov.movement_type}
                         </Badge>
-                      </td>
+                      </TD>
 
-                      <td className="py-3 px-3 text-right font-bold">
-                        <span className={isDispatch ? 'text-emerald-700' : 'text-neutral-900'}>
+                      <TD className="text-right font-bold">
+                        <span className={isDispatch ? 'text-emerald-700 dark:text-emerald-300' : 'text-foreground'}>
                           {isDispatch ? '+' : '-'}
                           {mov.quantity}
                         </span>{' '}
-                        <span className="text-[10px] text-neutral-500 font-normal">{uom?.code}</span>
-                      </td>
+                        <span className="text-[10px] text-muted-foreground font-normal">{uom?.code}</span>
+                      </TD>
 
-                      <td className="py-3 px-3 font-sans text-neutral-600">
-                        <div className="font-semibold text-neutral-900 font-mono">Ref: #{mov.reference_id}</div>
-                        <div className="text-[10px] text-neutral-400">
-                          {mov.vehicle_number ? `Vehicle: ${mov.vehicle_number} • ` : ''}
-                          {mov.notes}
-                        </div>
-                      </td>
+                      <TD className="font-sans text-muted-foreground">
+                        <div className="font-semibold text-foreground font-mono">Ref: #{mov.reference_id}</div>
+                      </TD>
 
-                      <td className="py-3 px-3 text-center">
+                      <TD className="text-center">
                         {isDispatch ? (
-                          <button
+                          <Button
+                            variant="primary"
+                            size="sm"
                             onClick={() => setSelectedChallanRef(mov.reference_id)}
-                            className="px-2.5 py-1 text-[11px] font-semibold bg-neutral-900 text-white rounded hover:bg-neutral-800 transition-colors inline-flex items-center gap-1.5 shadow-2xs cursor-pointer"
                             title="Print / View GST Delivery Challan"
+                            className="text-[11px] shadow-2xs"
                           >
-                            <Printer className="w-3.5 h-3.5 text-neutral-300" />
+                            <Printer className="w-3.5 h-3.5 text-primary-foreground" />
                             <span>Print Challan</span>
-                          </button>
+                          </Button>
                         ) : (
-                          <span className="text-[10px] font-mono text-neutral-400">Return Slip</span>
+                          <span className="text-[10px] font-mono text-muted-foreground">Return Slip</span>
                         )}
-                      </td>
+                      </TD>
 
-                      <td className="py-3 px-3 text-center">
+                      <TD className="text-center">
                         {!billingStatus ? (
-                          <span className="text-[10px] font-mono text-neutral-400">—</span>
+                          <span className="text-[10px] font-mono text-muted-foreground">—</span>
                         ) : billingStatus === 'BILLED' ? (
                           <Badge variant="success">Billed</Badge>
                         ) : billingStatus === 'PARTIAL' ? (
@@ -509,16 +456,16 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
                         ) : (
                           <Badge variant="neutral">Unbilled</Badge>
                         )}
-                      </td>
+                      </TD>
 
-                      <td className="py-3 px-4 text-neutral-500">{mov.created_by}</td>
-                    </tr>
+                      <TD className="text-muted-foreground">{mov.created_by}</TD>
+                    </TR>
                   );
                 })}
-              </tbody>
-            </table>
+              </TBody>
+            </Table>
           </div>
-        </div>
+        </TableShell>
       )}
 
       {/* Dispatch Modal with Logistics and Multi-Item Support */}
@@ -531,15 +478,13 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
       >
         <form onSubmit={handleConfirmDispatch} className="space-y-4 text-xs">
           {operationError && (
-            <div className="p-2.5 bg-rose-50 border border-rose-200 text-rose-800 rounded font-medium">
-              {operationError}
-            </div>
+            <Alert tone="destructive">{operationError}</Alert>
           )}
 
           {/* Consignee and Challan Header */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3 bg-neutral-50 border border-neutral-200 rounded">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3 bg-muted border border-border rounded-md">
             <div className="sm:col-span-2">
-              <label className="block font-semibold text-neutral-700 mb-1">Customer / Consignee *</label>
+              <Label className="mb-1">Customer / Consignee *</Label>
               <CustomerPicker
                 value={effectiveDispatchCustomerId}
                 onChange={(id) => setDispatchForm({ ...dispatchForm, customerId: id })}
@@ -548,96 +493,30 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
             </div>
 
             <div>
-              <label className="block font-semibold text-neutral-700 mb-1">Challan Number *</label>
-              <input
+              <Label className="mb-1">Challan Number *</Label>
+              <Input
                 type="text"
                 required
                 value={dispatchForm.referenceId}
                 onChange={(e) => setDispatchForm({ ...dispatchForm, referenceId: e.target.value })}
-                className="w-full p-2 border border-neutral-300 rounded font-mono font-bold"
-                placeholder="e.g. CH-2026-1001"
+                className="w-full font-mono font-bold"
+                placeholder="Auto-assigned in sequence"
               />
-            </div>
-          </div>
-
-          {/* Logistics & Transporter Details */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div>
-              <label className="block font-semibold text-neutral-700 mb-1">Vehicle Number</label>
-              <input
-                type="text"
-                value={dispatchForm.vehicleNumber}
-                onChange={(e) => setDispatchForm({ ...dispatchForm, vehicleNumber: e.target.value })}
-                className="w-full p-2 border border-neutral-300 rounded font-mono"
-                placeholder="e.g. GJ-05-BX-4921"
-              />
-            </div>
-
-            <div>
-              <label className="block font-semibold text-neutral-700 mb-1">Transporter Name</label>
-              <input
-                type="text"
-                value={dispatchForm.transporterName}
-                onChange={(e) => setDispatchForm({ ...dispatchForm, transporterName: e.target.value })}
-                className="w-full p-2 border border-neutral-300 rounded"
-                placeholder="e.g. ABC Logistics"
-              />
-            </div>
-
-            <div>
-              <label className="block font-semibold text-neutral-700 mb-1">E-Way Bill Number (if any)</label>
-              <input
-                type="text"
-                value={dispatchForm.ewayBillNumber}
-                onChange={(e) => setDispatchForm({ ...dispatchForm, ewayBillNumber: e.target.value })}
-                className="w-full p-2 border border-neutral-300 rounded font-mono"
-                placeholder="e.g. 241098492019"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block font-semibold text-neutral-700 mb-1">Nature of Movement / Purpose</label>
-              <select
-                value={dispatchForm.dispatchPurpose}
-                onChange={(e) => setDispatchForm({ ...dispatchForm, dispatchPurpose: e.target.value })}
-                className="w-full p-2 border border-neutral-300 rounded bg-white"
-              >
-                <option value="Consignment Transfer (Rule 55)">Consignment Transfer (Rule 55)</option>
-                <option value="Customer Site Storage & Holding">Customer Site Storage &amp; Holding</option>
-                <option value="Supply on Approval / Testing">Supply on Approval / Testing</option>
-                <option value="Job Work / Processing">Job Work / Processing</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block font-semibold text-neutral-700 mb-1">Gate / Site Instructions</label>
-              <input
-                type="text"
-                value={dispatchForm.notes}
-                onChange={(e) => setDispatchForm({ ...dispatchForm, notes: e.target.value })}
-                className="w-full p-2 border border-neutral-300 rounded"
-                placeholder="e.g. Direct site unload via Gate 2"
-              />
+              <p className="text-[10px] text-muted-foreground mt-0.5">Auto-filled — editable, must stay unique per customer.</p>
             </div>
           </div>
 
           {/* Items Section */}
-          <div className="border border-neutral-200 rounded p-3 bg-neutral-50/50 space-y-3">
+          <div className="border border-border rounded-md p-3 bg-muted/50 space-y-3">
             <div className="flex items-center justify-between">
-              <span className="font-bold text-neutral-900 uppercase text-[11px] tracking-wider flex items-center gap-1.5">
-                <Truck className="w-3.5 h-3.5 text-neutral-700" />
+              <span className="font-bold text-foreground uppercase text-[11px] tracking-wider flex items-center gap-1.5">
+                <Truck className="w-3.5 h-3.5 text-foreground" />
                 Goods to Dispatch ({dispatchForm.items.length} Product{dispatchForm.items.length > 1 ? 's' : ''})
               </span>
-              <button
-                type="button"
-                onClick={handleAddDispatchItem}
-                className="px-2.5 py-1 text-[11px] font-semibold bg-white border border-neutral-300 rounded hover:bg-neutral-100 flex items-center gap-1 text-neutral-800 cursor-pointer"
-              >
-                <PlusCircle className="w-3 h-3 text-neutral-600" />
+              <Button type="button" variant="secondary" size="sm" onClick={handleAddDispatchItem} className="text-[11px] px-2.5 py-1">
+                <PlusCircle className="w-3 h-3 text-muted-foreground" />
                 <span>+ Add Item to Challan</span>
-              </button>
+              </Button>
             </div>
 
             <div className="space-y-2">
@@ -649,13 +528,13 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
                 return (
                   <div
                     key={idx}
-                    className="p-3 bg-white border border-neutral-200 rounded grid grid-cols-12 gap-2 items-center"
+                    className="p-3 bg-card border border-border rounded-md grid grid-cols-12 gap-2 items-center"
                   >
                     <div className="col-span-12 sm:col-span-6">
-                      <label className="block text-[10px] font-mono text-neutral-500 mb-0.5">
+                      <label className="block text-[10px] font-mono text-muted-foreground mb-0.5">
                         Product Item #{idx + 1}
                       </label>
-                      <select
+                      <Select
                         value={item.productId}
                         onChange={(e) => {
                           const newProdId = e.target.value;
@@ -668,7 +547,7 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
                           };
                           setDispatchForm({ ...dispatchForm, items: newItems });
                         }}
-                        className="w-full p-1.5 border border-neutral-300 rounded bg-white text-xs"
+                        className="w-full text-xs"
                       >
                         {allProducts.map((p) => {
                           const stock = getCurrentCompanyStock(p.id);
@@ -678,17 +557,17 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
                             </option>
                           );
                         })}
-                      </select>
-                      <div className="text-[10px] font-mono text-neutral-500 mt-0.5">
-                        Available in Warehouse: <span className="font-bold text-neutral-800">{availableStock} {prodUom?.code}</span>
+                      </Select>
+                      <div className="text-[10px] font-mono text-muted-foreground mt-0.5">
+                        Available in Warehouse: <span className="font-bold text-foreground">{availableStock} {prodUom?.code}</span>
                       </div>
                     </div>
 
                     <div className="col-span-8 sm:col-span-4">
-                      <label className="block text-[10px] font-mono text-neutral-500 mb-0.5">
+                      <label className="block text-[10px] font-mono text-muted-foreground mb-0.5">
                         Quantity ({prodUom?.code})
                       </label>
-                      <input
+                      <Input
                         type="number"
                         min="1"
                         required
@@ -701,23 +580,24 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
                           };
                           setDispatchForm({ ...dispatchForm, items: newItems });
                         }}
-                        className="w-full p-1.5 border border-neutral-300 rounded font-mono font-bold text-sm"
+                        className="w-full font-mono font-bold text-sm"
                       />
                     </div>
 
                     <div className="col-span-4 sm:col-span-2 flex justify-end items-end h-full pt-4">
                       {dispatchForm.items.length > 1 ? (
-                        <button
+                        <Button
                           type="button"
+                          variant="ghost"
+                          size="icon"
                           onClick={() => handleRemoveDispatchItem(idx)}
                           aria-label="Remove dispatch line item"
-                          className="p-1.5 text-neutral-400 hover:text-rose-600 rounded transition-colors cursor-pointer"
                           title="Remove item"
                         >
                           <Trash2 className="w-4 h-4" aria-hidden="true" />
-                        </button>
+                        </Button>
                       ) : (
-                        <span className="text-[10px] font-mono text-neutral-400">Primary</span>
+                        <span className="text-[10px] font-mono text-muted-foreground">Primary</span>
                       )}
                     </div>
                   </div>
@@ -726,27 +606,20 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center justify-between pt-3 border-t border-neutral-200">
-            <span className="text-[11px] font-mono text-neutral-500 flex items-center gap-1">
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+          <div className="flex items-center justify-between pt-3 border-t border-border">
+            <span className="text-[11px] font-mono text-muted-foreground flex items-center gap-1">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
               Will generate printable Delivery Challan immediately
             </span>
 
             <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => setIsDispatchModalOpen(false)}
-                className="px-3.5 py-1.5 text-neutral-700 border border-neutral-300 rounded hover:bg-neutral-50"
-              >
+              <Button type="button" variant="secondary" size="sm" onClick={() => setIsDispatchModalOpen(false)}>
                 Cancel
-              </button>
-              <button
-                type="submit"
-                className="px-4 py-1.5 font-semibold bg-neutral-900 text-white rounded hover:bg-neutral-800 transition-colors flex items-center gap-1.5 shadow-2xs cursor-pointer"
-              >
+              </Button>
+              <Button type="submit" variant="primary" size="sm" className="shadow-2xs">
                 <Printer className="w-3.5 h-3.5" />
                 <span>Confirm &amp; Generate Challan</span>
-              </button>
+              </Button>
             </div>
           </div>
         </form>
@@ -762,13 +635,11 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
       >
         <form onSubmit={handleConfirmReturn} className="space-y-4 text-xs">
           {operationError && (
-            <div className="p-2.5 bg-rose-50 border border-rose-200 text-rose-800 rounded">
-              {operationError}
-            </div>
+            <Alert tone="destructive">{operationError}</Alert>
           )}
 
           <div>
-            <label className="block font-semibold text-neutral-700 mb-1">Customer / Consignee</label>
+            <Label className="mb-1">Customer / Consignee</Label>
             <CustomerPicker
               value={effectiveReturnCustomerId}
               onChange={(id) => setReturnForm({ ...returnForm, customerId: id })}
@@ -777,8 +648,8 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
           </div>
 
           <div>
-            <label className="block font-semibold text-neutral-700 mb-1">Product</label>
-            <select
+            <Label className="mb-1">Product</Label>
+            <Select
               value={returnForm.productId}
               onChange={(e) => {
                 const p = products[e.target.value];
@@ -788,66 +659,49 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
                   unitId: p ? p.primary_unit_id : 'uom-pcs'
                 });
               }}
-              className="w-full p-2 border border-neutral-300 rounded bg-white text-xs"
+              className="w-full text-xs"
             >
               {allProducts.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.product_name}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block font-semibold text-neutral-700 mb-1">Return Quantity</label>
-              <input
+              <Label className="mb-1">Return Quantity</Label>
+              <Input
                 type="number"
                 min="1"
                 required
                 value={returnForm.quantity}
                 onChange={(e) => setReturnForm({ ...returnForm, quantity: Number(e.target.value) })}
-                className="w-full p-2 border border-neutral-300 rounded font-mono"
+                className="w-full font-mono"
               />
             </div>
 
             <div>
-              <label className="block font-semibold text-neutral-700 mb-1">Return Challan Reference</label>
-              <input
+              <Label className="mb-1">Return Reference *</Label>
+              <Input
                 type="text"
                 required
                 value={returnForm.referenceId}
                 onChange={(e) => setReturnForm({ ...returnForm, referenceId: e.target.value })}
-                className="w-full p-2 border border-neutral-300 rounded font-mono"
+                className="w-full font-mono"
+                placeholder="Auto-assigned in sequence"
               />
             </div>
           </div>
 
-          <div>
-            <label className="block font-semibold text-neutral-700 mb-1">Return Reason / Notes</label>
-            <input
-              type="text"
-              value={returnForm.notes}
-              onChange={(e) => setReturnForm({ ...returnForm, notes: e.target.value })}
-              className="w-full p-2 border border-neutral-300 rounded"
-              placeholder="e.g. Surplus site rod returned, undamaged"
-            />
-          </div>
-
-          <div className="flex justify-end gap-2 pt-3 border-t border-neutral-200">
-            <button
-              type="button"
-              onClick={() => setIsReturnModalOpen(false)}
-              className="px-3.5 py-1.5 text-neutral-700 border border-neutral-300 rounded hover:bg-neutral-50"
-            >
+          <div className="flex justify-end gap-2 pt-3 border-t border-border">
+            <Button type="button" variant="secondary" size="sm" onClick={() => setIsReturnModalOpen(false)}>
               Cancel
-            </button>
-            <button
-              type="submit"
-              className="px-4 py-1.5 font-semibold bg-neutral-900 text-white rounded hover:bg-neutral-800"
-            >
+            </Button>
+            <Button type="submit" variant="primary" size="sm">
               Accept Return
-            </button>
+            </Button>
           </div>
         </form>
       </Modal>

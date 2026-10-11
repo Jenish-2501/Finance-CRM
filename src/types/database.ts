@@ -27,6 +27,9 @@ export interface BusinessSettings {
   branch: string;
   invoice_prefix: string;
   invoice_next_number: number;
+  invoice_start_number: number; // first number of each FY series (default 1)
+  customer_next_number: number; // floor for auto-assigned plain customer numbers
+  document_next_number: number; // floor for auto dispatch-document numbers (shared DISPATCH+RETURN)
   currency: string;
   default_gst_rate: number; // e.g. 5 for 5% total (2.5% CGST + 2.5% SGST intra-state)
   state_code: string; // e.g. "24" for Gujarat to distinguish intra-state (CGST+SGST) vs inter-state (IGST)
@@ -50,14 +53,12 @@ export interface Customer {
   customer_number: string; // searchable short code, unique (e.g. C-1001)
   pan: string;
   gst_number: string;
-  email: string;
   mobile: string;
   address: string;
   city: string;
   state: string;
   country: string;
   postal_code: string;
-  state_code: string; // for GST intra/inter determination
   bank_details?: {
     bank_name?: string;
     account_number?: string;
@@ -76,7 +77,6 @@ export interface Product {
   description: string;
   image?: string;
   primary_unit_id: string;
-  hsn_code?: string;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -188,13 +188,22 @@ export interface CustomerInventoryMovement {
   movement_date: string;
   reference_type: 'DISPATCH' | 'RETURN' | 'MANUAL_ADJUSTMENT';
   reference_id: string;
-  notes: string;
-  vehicle_number?: string;
-  transporter_name?: string;
-  eway_bill_number?: string;
-  dispatch_purpose?: string;
+  document_id: string | null; // FK → dispatch_documents.id (backfilled by v9)
   created_at: string;
   created_by: string; // user id
+}
+
+export type DispatchDocumentType = 'DISPATCH' | 'RETURN';
+
+// One row per dispatch challan / return slip. The document number lives ONCE
+// here (UNIQUE per customer + type); movements point at it via document_id.
+export interface DispatchDocument {
+  id: string;
+  document_number: string;
+  customer_id: string;
+  document_type: DispatchDocumentType;
+  document_date: string;
+  created_at: string;
 }
 
 export type InvoiceStatus = 'DRAFT' | 'FINALIZED' | 'CANCELLED';
@@ -241,6 +250,7 @@ export interface Invoice {
   invoice_number: string;
   customer_id: string;
   invoice_date: string;
+  fy: string; // financial year of invoice_date, e.g. '2025-26'; number is unique within it
   billing_period_start: string;
   billing_period_end: string;
   status: InvoiceStatus;
@@ -291,6 +301,16 @@ export interface InvoiceCustomerInventoryAllocation {
   invoice_id: string;
   customer_inventory_movement_id: string;
   allocated_quantity: number;
+  created_at: string;
+}
+
+// Per-financial-year invoice numbering series. Plain numbers restart at
+// start_number every FY; created on first use (automatic rollover).
+export interface InvoiceSeries {
+  id: string;
+  fy: string;
+  next_number: number;
+  start_number: number;
   created_at: string;
 }
 

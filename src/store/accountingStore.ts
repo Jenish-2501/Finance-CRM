@@ -61,9 +61,11 @@ import {
   StockReceiptItem,
   InventoryMovement,
   CustomerInventoryMovement,
+  DispatchDocument,
   Invoice,
   InvoiceItem,
   InvoiceCustomerInventoryAllocation,
+  InvoiceSeries,
   InvoicePayment,
   AuditLog,
   InvoiceStatus,
@@ -93,7 +95,11 @@ import {
   convertQuantity,
   calculateLineItemFinancials,
   calculateInvoiceTotals,
-  calculateInvoiceOutstanding
+  calculateInvoiceOutstanding,
+  getFyForDate,
+  getCustomerStateCode,
+  suggestCustomerNumber,
+  suggestNextPlainNumber
 } from '../utils/calculations';
 
 export interface LedgerEntry {
@@ -150,9 +156,11 @@ interface AccountingState {
   stockReceiptItems: Record<string, StockReceiptItem>;
   inventoryMovements: Record<string, InventoryMovement>;
   customerInventoryMovements: Record<string, CustomerInventoryMovement>;
+  dispatchDocuments: Record<string, DispatchDocument>;
   invoices: Record<string, Invoice>;
   invoiceItems: Record<string, InvoiceItem>;
   invoiceAllocations: Record<string, InvoiceCustomerInventoryAllocation>;
+  invoiceSeries: Record<string, InvoiceSeries>;
   invoicePayments: Record<string, InvoicePayment>;
   auditLogs: AuditLog[];
 
@@ -187,12 +195,12 @@ interface AccountingState {
   createCustomer: (data: Omit<Customer, 'id' | 'created_at' | 'updated_at'>) => { success: boolean; customer?: Customer; error?: string };
   updateCustomer: (id: string, data: Partial<Customer>) => { success: boolean; error?: string };
   isCustomerNumberTaken: (customerNumber: string, excludeId?: string) => boolean;
+  suggestNextCustomerNumber: () => string;
   deleteCustomer: (id: string) => { success: boolean; message?: string };
 
   createProduct: (
     productData: Omit<Product, 'id' | 'created_at' | 'updated_at'>,
-    initialPrice: number,
-    secondaryUnitConfig?: { unitId: string; conversionToPrimary: number; price: number }
+    initialPrice: number
   ) => Product;
   updateProduct: (id: string, data: Partial<Product>) => void;
   configureProductUnit: (data: Omit<ProductUnit, 'id' | 'created_at' | 'updated_at'>) => ProductUnit;
@@ -222,23 +230,13 @@ interface AccountingState {
     unitId: string;
     quantity: number;
     referenceId: string;
-    notes?: string;
     movementDate?: string;
-    vehicleNumber?: string;
-    transporterName?: string;
-    ewayBillNumber?: string;
-    dispatchPurpose?: string;
   }) => { success: boolean; movementId?: string; referenceId?: string; error?: string };
 
   dispatchBatchInventoryToCustomer: (params: {
     customerId: string;
     referenceId?: string;
-    notes?: string;
     movementDate?: string;
-    vehicleNumber?: string;
-    transporterName?: string;
-    ewayBillNumber?: string;
-    dispatchPurpose?: string;
     items: Array<{
       productId: string;
       unitId: string;
@@ -246,13 +244,15 @@ interface AccountingState {
     }>;
   }) => { success: boolean; movementIds?: string[]; referenceId?: string; error?: string };
 
+  // Dispatch-document numbering: one shared plain sequence for challans + returns.
+  suggestNextDocumentNumber: (customerId: string, documentType: 'DISPATCH' | 'RETURN') => string;
+
   createCustomerReturn: (params: {
     customerId: string;
     productId: string;
     unitId: string;
     quantity: number;
     referenceId: string;
-    notes: string;
     movementDate?: string;
   }) => { success: boolean; error?: string };
 
@@ -265,6 +265,11 @@ interface AccountingState {
   }) => { success: boolean; error?: string };
 
   // Billing & Invoices Actions
+  // FY series: ensureSeries (get-or-create, automatic rollover), startNewFySeries
+  // (explicit rollover for the current FY), setSeriesNextNumber (owner control).
+  ensureSeries: (fy: string) => InvoiceSeries;
+  startNewFySeries: () => { success: boolean; fy: string; existed: boolean };
+  setSeriesNextNumber: (fy: string, nextNumber: number) => { success: boolean; error?: string };
   createInvoice: (params: {
     customerId: string;
     billingPeriodStart: string;
@@ -280,6 +285,7 @@ interface AccountingState {
     otherCharges?: number;
     notes?: string;
     status?: InvoiceStatus;
+    invoiceDate?: string; // backdated billing date (ISO); defaults to now; never the future
   }) => { success: boolean; invoiceId?: string; error?: string };
 
   finalizeInvoice: (invoiceId: string) => { success: boolean; error?: string };
@@ -309,6 +315,35 @@ interface AccountingState {
   resetToSeedData: () => void;
 }
 
+// Resolve a dispatch-document number for (customer, type): a provided reference
+// wins when free, otherwise the next free plain number is assigned. The shared
+// counter only ever moves forward, so sequences from both families stay tight.
+// Pure over its inputs — the caller persists the advanced floor.
+function claimDocumentNumber(
+  headers: DispatchDocument[],
+  customerId: string,
+  documentType: 'DISPATCH' | 'RETURN',
+  floor: number,
+  preferred?: string
+): { ok: boolean; number?: string; nextFloor?: number; error?: string } {
+  const trimmed = (preferred || '').trim();
+  const scoped = headers.filter((h) => h.customer_id === customerId && h.document_type === documentType);
+  if (trimmed) {
+    const taken = scoped.some((h) => h.document_number.trim().toUpperCase() === trimmed.toUpperCase());
+    if (taken) {
+      return { ok: false, error: `Document number ${trimmed} already exists for this customer.` };
+    }
+    const parsed = /^\d+$/.test(trimmed) ? Number(trimmed) : 0;
+    return { ok: true, number: trimmed, nextFloor: Math.max(floor, parsed + 1) };
+  }
+  const number = suggestNextPlainNumber(
+    scoped.map((h) => h.document_number),
+    floor
+  );
+  if (!number) return { ok: false, error: 'No free document number available.' };
+  return { ok: true, number, nextFloor: Number(number) + 1 };
+}
+
 export const useAccountingStore = create<AccountingState>()(
   persist(
     (set, get) => ({
@@ -324,9 +359,11 @@ export const useAccountingStore = create<AccountingState>()(
       stockReceiptItems: { ...SEED_STOCK_RECEIPT_ITEMS },
       inventoryMovements: { ...SEED_INVENTORY_MOVEMENTS },
       customerInventoryMovements: { ...SEED_CUSTOMER_INVENTORY_MOVEMENTS },
+      dispatchDocuments: {},
       invoices: { ...SEED_INVOICES },
       invoiceItems: { ...SEED_INVOICE_ITEMS },
       invoiceAllocations: { ...SEED_INVOICE_ALLOCATIONS },
+      invoiceSeries: {},
       invoicePayments: { ...SEED_INVOICE_PAYMENTS },
       auditLogs: [...SEED_AUDIT_LOGS],
 
@@ -775,27 +812,67 @@ export const useAccountingStore = create<AccountingState>()(
         );
       },
 
+      suggestNextCustomerNumber: () => {
+        const floor = get().businessSettings.customer_next_number;
+        return suggestCustomerNumber(
+          Object.values(get().customers).map((c) => c.customer_number || ''),
+          Number.isInteger(floor) && (floor as number) >= 1 ? (floor as number) : 1
+        );
+      },
+
+      suggestNextDocumentNumber: (customerId: string, documentType: 'DISPATCH' | 'RETURN') => {
+        const floor = get().businessSettings.document_next_number;
+        return suggestNextPlainNumber(
+          Object.values(get().dispatchDocuments)
+            .filter((h) => h.customer_id === customerId && h.document_type === documentType)
+            .map((h) => h.document_number),
+          Number.isInteger(floor) && (floor as number) >= 1 ? (floor as number) : 1
+        );
+      },
+
       createCustomer: (data) => {
-        const customerNumber = (data.customer_number || '').trim().toUpperCase();
-        if (!customerNumber) {
-          return { success: false, error: 'Customer number is required.' };
+        let customerNumber = (data.customer_number || '').trim().toUpperCase();
+        const autoAssigned = !customerNumber;
+        if (autoAssigned) {
+          // Automatic plain sequence (1, 2, 3…): suggestion skips taken numbers.
+          customerNumber = get().suggestNextCustomerNumber().toUpperCase();
+          if (!customerNumber) {
+            return { success: false, error: 'No free customer number available.' };
+          }
         }
         if (get().isCustomerNumberTaken(customerNumber)) {
           return { success: false, error: `Customer number ${customerNumber} is already in use.` };
         }
+        // Advance the floor past the issued number so the next auto-assign continues the sequence.
+        const issued = /^\d+$/.test(customerNumber) ? Number(customerNumber) : 0;
+        const floor = get().businessSettings.customer_next_number;
+        const nextFloor = Math.max(
+          Number.isInteger(floor) && (floor as number) >= 1 ? (floor as number) : 1,
+          issued + 1
+        );
         const id = `cust-${Date.now()}`;
+        const now = new Date().toISOString();
         const newCust: Customer = {
           ...data,
           customer_number: customerNumber,
           id,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
+          created_at: now,
+          updated_at: now
+        };
+        const updatedSettings: BusinessSettings = {
+          ...get().businessSettings,
+          customer_next_number: nextFloor,
+          updated_at: now
         };
         set((state) => ({
-          customers: { ...state.customers, [id]: newCust }
+          customers: { ...state.customers, [id]: newCust },
+          businessSettings: updatedSettings
         }));
         get().logAudit('CUSTOMER_CREATED', 'CUSTOMER', id, newCust as unknown as Record<string, unknown>);
-        persistDiff({ customers: [newCust as unknown as Record<string, unknown>] });
+        persistDiff({
+          customers: [newCust as unknown as Record<string, unknown>],
+          businessSettings: [updatedSettings as unknown as Record<string, unknown>]
+        });
         return { success: true, customer: newCust };
       },
 
@@ -854,7 +931,7 @@ export const useAccountingStore = create<AccountingState>()(
         return { success: true };
       },
 
-      createProduct: (productData, initialPrice, secondaryUnitConfig) => {
+      createProduct: (productData, initialPrice) => {
         const id = `prod-${Date.now()}`;
         const newProd: Product = {
           ...productData,
@@ -891,32 +968,6 @@ export const useAccountingStore = create<AccountingState>()(
 
         const newUnits: Record<string, ProductUnit> = { [primaryPuId]: primaryPU };
         const newPrices: Record<string, ProductPrice> = { [priceId]: primaryPrice };
-
-        if (secondaryUnitConfig) {
-          const secPuId = `pu-${id}-sec`;
-          newUnits[secPuId] = {
-            id: secPuId,
-            product_id: id,
-            unit_id: secondaryUnitConfig.unitId,
-            conversion_to_primary: secondaryUnitConfig.conversionToPrimary,
-            is_stock_unit: true,
-            is_billing_unit: true,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          };
-
-          const secPriceId = `pp-${id}-sec`;
-          newPrices[secPriceId] = {
-            id: secPriceId,
-            product_id: id,
-            unit_id: secondaryUnitConfig.unitId,
-            price: secondaryUnitConfig.price,
-            effective_from: new Date().toISOString(),
-            effective_to: null,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          };
-        }
 
         set((state) => ({
           products: { ...state.products, [id]: newProd },
@@ -1203,22 +1254,12 @@ export const useAccountingStore = create<AccountingState>()(
         unitId,
         quantity,
         referenceId,
-        notes,
-        movementDate,
-        vehicleNumber,
-        transporterName,
-        ewayBillNumber,
-        dispatchPurpose
+        movementDate
       }) => {
         const batchRes = get().dispatchBatchInventoryToCustomer({
           customerId,
           referenceId,
-          notes,
           movementDate,
-          vehicleNumber,
-          transporterName,
-          ewayBillNumber,
-          dispatchPurpose,
           items: [{ productId, unitId, quantity }]
         });
 
@@ -1233,12 +1274,7 @@ export const useAccountingStore = create<AccountingState>()(
       dispatchBatchInventoryToCustomer: ({
         customerId,
         referenceId,
-        notes,
         movementDate,
-        vehicleNumber,
-        transporterName,
-        ewayBillNumber,
-        dispatchPurpose,
         items
       }) => {
         if (!items || items.length === 0) {
@@ -1275,7 +1311,31 @@ export const useAccountingStore = create<AccountingState>()(
 
         const now = new Date().toISOString();
         const date = movementDate || now;
-        const refId = referenceId || `CH-${Math.floor(1000 + Math.random() * 9000)}`;
+        // One atomic document: header row + all movement rows share document_id.
+        const floor = get().businessSettings.document_next_number;
+        const claim = claimDocumentNumber(
+          Object.values(get().dispatchDocuments),
+          customerId,
+          'DISPATCH',
+          Number.isInteger(floor) && (floor as number) >= 1 ? (floor as number) : 1,
+          referenceId
+        );
+        if (!claim.ok) return { success: false, error: claim.error };
+        const refId = claim.number as string;
+        const docId = `doc-${Date.now()}`;
+        const header: DispatchDocument = {
+          id: docId,
+          document_number: refId,
+          customer_id: customerId,
+          document_type: 'DISPATCH',
+          document_date: date,
+          created_at: now
+        };
+        const updatedSettings: BusinessSettings = {
+          ...get().businessSettings,
+          document_next_number: claim.nextFloor as number,
+          updated_at: now
+        };
 
         const newCustomerMovs: Record<string, CustomerInventoryMovement> = {};
         const newCompanyMovs: Record<string, InventoryMovement> = {};
@@ -1296,11 +1356,7 @@ export const useAccountingStore = create<AccountingState>()(
             movement_date: date,
             reference_type: 'DISPATCH',
             reference_id: refId,
-            notes: notes || `Direct site dispatch to ${customer.customer_name}`,
-            vehicle_number: vehicleNumber,
-            transporter_name: transporterName,
-            eway_bill_number: ewayBillNumber,
-            dispatch_purpose: dispatchPurpose,
+            document_id: docId,
             created_at: now,
             created_by: OWNER_ID
           };
@@ -1328,12 +1384,19 @@ export const useAccountingStore = create<AccountingState>()(
           inventoryMovements: {
             ...state.inventoryMovements,
             ...newCompanyMovs
-          }
+          },
+          dispatchDocuments: {
+            ...state.dispatchDocuments,
+            [docId]: header
+          },
+          businessSettings: updatedSettings
         }));
 
         persistDiff({
           customerInventoryMovements: Object.values(newCustomerMovs) as unknown as Record<string, unknown>[],
-          inventoryMovements: Object.values(newCompanyMovs) as unknown as Record<string, unknown>[]
+          inventoryMovements: Object.values(newCompanyMovs) as unknown as Record<string, unknown>[],
+          dispatchDocuments: [header as unknown as Record<string, unknown>],
+          businessSettings: [updatedSettings as unknown as Record<string, unknown>]
         });
 
         get().logAudit('CUSTOMER_DISPATCH', 'CUSTOMER_INVENTORY_MOVEMENT', refId, {
@@ -1346,7 +1409,7 @@ export const useAccountingStore = create<AccountingState>()(
         return { success: true, movementIds: createdIds, referenceId: refId };
       },
 
-      createCustomerReturn: ({ customerId, productId, unitId, quantity, referenceId, notes, movementDate }) => {
+      createCustomerReturn: ({ customerId, productId, unitId, quantity, referenceId, movementDate }) => {
         if (quantity <= 0) {
           return { success: false, error: 'Return quantity must be greater than zero.' };
         }
@@ -1375,7 +1438,32 @@ export const useAccountingStore = create<AccountingState>()(
         const cimId = `cim-${Date.now()}`;
         const imId = `im-${Date.now()}`;
 
-        // ATOMIC MUTATION: Customer movement (RETURN) and Company movement (CUSTOMER_RETURN)
+        const floor = get().businessSettings.document_next_number;
+        const claim = claimDocumentNumber(
+          Object.values(get().dispatchDocuments),
+          customerId,
+          'RETURN',
+          Number.isInteger(floor) && (floor as number) >= 1 ? (floor as number) : 1,
+          referenceId
+        );
+        if (!claim.ok) return { success: false, error: claim.error };
+        const returnRef = claim.number as string;
+        const docId = `doc-${Date.now()}-ret`;
+        const header: DispatchDocument = {
+          id: docId,
+          document_number: returnRef,
+          customer_id: customerId,
+          document_type: 'RETURN',
+          document_date: date,
+          created_at: now
+        };
+        const updatedSettings: BusinessSettings = {
+          ...get().businessSettings,
+          document_next_number: claim.nextFloor as number,
+          updated_at: now
+        };
+
+        // ATOMIC MUTATION: header + Customer movement (RETURN) + Company movement (CUSTOMER_RETURN)
         const newCustomerMov: CustomerInventoryMovement = {
           id: cimId,
           customer_id: customerId,
@@ -1385,8 +1473,8 @@ export const useAccountingStore = create<AccountingState>()(
           movement_type: 'RETURN',
           movement_date: date,
           reference_type: 'RETURN',
-          reference_id: referenceId || `RET-${Math.floor(100 + Math.random() * 900)}`,
-          notes: notes || `Return from ${customer.customer_name}`,
+          reference_id: returnRef,
+          document_id: docId,
           created_at: now,
           created_by: OWNER_ID
         };
@@ -1413,12 +1501,19 @@ export const useAccountingStore = create<AccountingState>()(
           inventoryMovements: {
             ...state.inventoryMovements,
             [imId]: newCompanyMov
-          }
+          },
+          dispatchDocuments: {
+            ...state.dispatchDocuments,
+            [docId]: header
+          },
+          businessSettings: updatedSettings
         }));
 
         persistDiff({
           customerInventoryMovements: [newCustomerMov as unknown as Record<string, unknown>],
-          inventoryMovements: [newCompanyMov as unknown as Record<string, unknown>]
+          inventoryMovements: [newCompanyMov as unknown as Record<string, unknown>],
+          dispatchDocuments: [header as unknown as Record<string, unknown>],
+          businessSettings: [updatedSettings as unknown as Record<string, unknown>]
         });
 
         get().logAudit('CUSTOMER_RETURN', 'CUSTOMER_INVENTORY_MOVEMENT', cimId, {
@@ -1481,15 +1576,99 @@ export const useAccountingStore = create<AccountingState>()(
         return { success: true };
       },
 
-      createInvoice: ({ customerId, billingPeriodStart, billingPeriodEnd, items, otherCharges = 0, notes = '', status = 'DRAFT' }) => {
+      ensureSeries: (fy: string) => {
+        const existing = Object.values(get().invoiceSeries).find((s) => s.fy === fy);
+        if (existing) return existing;
+        const now = new Date().toISOString();
+        const start = get().businessSettings.invoice_start_number;
+        const row: InvoiceSeries = {
+          id: `series-${fy}`,
+          fy,
+          next_number: Number.isInteger(start) && (start as number) >= 1 ? (start as number) : 1,
+          start_number: Number.isInteger(start) && (start as number) >= 1 ? (start as number) : 1,
+          created_at: now
+        };
+        set((state) => ({ invoiceSeries: { ...state.invoiceSeries, [row.id]: row } }));
+        persistDiff({ invoiceSeries: [row as unknown as Record<string, unknown>] });
+        get().logAudit('FY_SERIES_STARTED', 'INVOICE_SERIES', row.id, {
+          fy,
+          startNumber: row.start_number
+        });
+        return row;
+      },
+
+      startNewFySeries: () => {
+        const fy = getFyForDate(new Date().toISOString());
+        const existed = Object.values(get().invoiceSeries).some((s) => s.fy === fy);
+        get().ensureSeries(fy);
+        return { success: true, fy, existed };
+      },
+
+      setSeriesNextNumber: (fy: string, nextNumber: number) => {
+        if (!Number.isInteger(nextNumber) || nextNumber < 1 || nextNumber > 999999999) {
+          return { success: false, error: 'Next number must be a whole number of 1 or more.' };
+        }
+        const series = get().ensureSeries(fy);
+        // Never rewind into already-issued numbers of this FY.
+        let maxUsed = 0;
+        for (const inv of Object.values(get().invoices)) {
+          if (inv.fy === fy) {
+            const n = Number(inv.invoice_number);
+            if (Number.isInteger(n) && n > maxUsed) maxUsed = n;
+          }
+        }
+        const floor = Math.max(series.start_number, maxUsed + 1);
+        if (nextNumber < floor) {
+          return {
+            success: false,
+            error: `Next number cannot go below ${floor} — higher numbers are already issued in FY ${fy}.`
+          };
+        }
+        if (series.next_number === nextNumber) return { success: true };
+        const updated: InvoiceSeries = { ...series, next_number: nextNumber };
+        set((state) => ({ invoiceSeries: { ...state.invoiceSeries, [series.id]: updated } }));
+        persistDiff({ invoiceSeries: [updated as unknown as Record<string, unknown>] });
+        get().logAudit('FY_SERIES_UPDATED', 'INVOICE_SERIES', series.id, {
+          fy,
+          nextNumber
+        });
+        return { success: true };
+      },
+
+      createInvoice: ({ customerId, billingPeriodStart, billingPeriodEnd, items, otherCharges = 0, notes = '', status = 'DRAFT', invoiceDate }) => {
         const { customers, products, uoms, businessSettings } = get();
         const customer = customers[customerId];
         if (!customer) return { success: false, error: 'Customer not found.' };
         if (!items || items.length === 0) return { success: false, error: 'Invoice must contain at least one line item.' };
 
         const now = new Date().toISOString();
+        // Backdated billing: the invoice belongs to its own date's FY, never the wall clock.
+        const invDate = invoiceDate || now;
+        if (Number.isNaN(Date.parse(invDate))) {
+          return { success: false, error: 'Invoice date is invalid.' };
+        }
+        if (new Date(invDate).getTime() > Date.now()) {
+          return { success: false, error: 'Invoice date cannot be in the future.' };
+        }
+        const fy = getFyForDate(invDate);
+        const series = get().ensureSeries(fy);
+        // Consume the next free plain number in this FY (skip legacy/edited collisions).
+        let seq = series.next_number;
+        let guard = 0;
+        while (
+          Object.values(get().invoices).some((i) => i.fy === fy && i.invoice_number === String(seq)) &&
+          guard < 500
+        ) {
+          seq += 1;
+          guard += 1;
+        }
+        if (guard >= 500) {
+          return { success: false, error: `No free invoice number left near ${series.next_number} in FY ${fy}.` };
+        }
+        const invoiceNumber = String(seq);
+        const updatedSeries: InvoiceSeries = { ...series, next_number: seq + 1 };
+
         const invoiceId = `inv-${Date.now()}`;
-        const invoiceNumber = `${businessSettings.invoice_prefix}${businessSettings.invoice_next_number}`;
 
         // Build item snapshots and calculate taxes
         const newInvoiceItems: Record<string, InvoiceItem> = {};
@@ -1517,7 +1696,7 @@ export const useAccountingStore = create<AccountingState>()(
             businessSettings.default_gst_rate,
             0,
             businessSettings.state_code,
-            customer.state_code
+            getCustomerStateCode(customer)
           );
 
           newInvoiceItems[itemId] = {
@@ -1565,7 +1744,8 @@ export const useAccountingStore = create<AccountingState>()(
           id: invoiceId,
           invoice_number: invoiceNumber,
           customer_id: customerId,
-          invoice_date: now,
+          invoice_date: invDate,
+          fy,
           billing_period_start: billingPeriodStart,
           billing_period_end: billingPeriodEnd,
           status,
@@ -1581,14 +1761,14 @@ export const useAccountingStore = create<AccountingState>()(
             customer_name: customer.customer_name,
             pan: customer.pan,
             gst_number: customer.gst_number,
-            email: customer.email,
+            email: '',
             mobile: customer.mobile,
             address: customer.address,
             city: customer.city,
             state: customer.state,
             country: customer.country,
             postal_code: customer.postal_code,
-            state_code: customer.state_code
+            state_code: getCustomerStateCode(customer)
           },
           business_snapshot: {
             business_name: businessSettings.business_name,
@@ -1620,21 +1800,14 @@ export const useAccountingStore = create<AccountingState>()(
           invoices: { ...state.invoices, [invoiceId]: newInvoice },
           invoiceItems: { ...state.invoiceItems, ...newInvoiceItems },
           invoiceAllocations: { ...state.invoiceAllocations, ...newAllocations },
-          businessSettings: {
-            ...state.businessSettings,
-            invoice_next_number: state.businessSettings.invoice_next_number + 1
-          }
+          invoiceSeries: { ...state.invoiceSeries, [updatedSeries.id]: updatedSeries }
         }));
 
         persistDiff({
           invoices: [newInvoice as unknown as Record<string, unknown>],
           invoiceItems: Object.values(newInvoiceItems) as unknown as Record<string, unknown>[],
           invoiceAllocations: Object.values(newAllocations) as unknown as Record<string, unknown>[],
-          businessSettings: [{
-            ...businessSettings,
-            invoice_next_number: businessSettings.invoice_next_number + 1,
-            updated_at: now
-          } as unknown as Record<string, unknown>]
+          invoiceSeries: [updatedSeries as unknown as Record<string, unknown>]
         });
 
         get().logAudit(
@@ -1643,6 +1816,7 @@ export const useAccountingStore = create<AccountingState>()(
           invoiceId,
           {
             invoiceNumber,
+            fy,
             customerName: customer.customer_name,
             grandTotal: totals.grandTotal,
             status
@@ -1834,9 +2008,11 @@ export const useAccountingStore = create<AccountingState>()(
           [before.stockReceiptItems as unknown as Record<string, unknown>, SEED_STOCK_RECEIPT_ITEMS as unknown as Record<string, unknown>, 'stockReceiptItems'],
           [before.inventoryMovements as unknown as Record<string, unknown>, SEED_INVENTORY_MOVEMENTS as unknown as Record<string, unknown>, 'inventoryMovements'],
           [before.customerInventoryMovements as unknown as Record<string, unknown>, SEED_CUSTOMER_INVENTORY_MOVEMENTS as unknown as Record<string, unknown>, 'customerInventoryMovements'],
+          [before.dispatchDocuments as unknown as Record<string, unknown>, {} as Record<string, unknown>, 'dispatchDocuments'],
           [before.invoices as unknown as Record<string, unknown>, SEED_INVOICES as unknown as Record<string, unknown>, 'invoices'],
           [before.invoiceItems as unknown as Record<string, unknown>, SEED_INVOICE_ITEMS as unknown as Record<string, unknown>, 'invoiceItems'],
           [before.invoiceAllocations as unknown as Record<string, unknown>, SEED_INVOICE_ALLOCATIONS as unknown as Record<string, unknown>, 'invoiceAllocations'],
+          [before.invoiceSeries as unknown as Record<string, unknown>, {} as Record<string, unknown>, 'invoiceSeries'],
           [before.invoicePayments as unknown as Record<string, unknown>, SEED_INVOICE_PAYMENTS as unknown as Record<string, unknown>, 'invoicePayments']
         ];
         for (const [currentMap, seedMap, entityType] of seedMaps) {
@@ -1864,9 +2040,11 @@ export const useAccountingStore = create<AccountingState>()(
           stockReceiptItems: { ...SEED_STOCK_RECEIPT_ITEMS },
           inventoryMovements: { ...SEED_INVENTORY_MOVEMENTS },
           customerInventoryMovements: { ...SEED_CUSTOMER_INVENTORY_MOVEMENTS },
+          dispatchDocuments: {},
           invoices: { ...SEED_INVOICES },
           invoiceItems: { ...SEED_INVOICE_ITEMS },
           invoiceAllocations: { ...SEED_INVOICE_ALLOCATIONS },
+          invoiceSeries: {},
           invoicePayments: { ...SEED_INVOICE_PAYMENTS },
           auditLogs: [...SEED_AUDIT_LOGS]
         });
@@ -1893,7 +2071,7 @@ export const useAccountingStore = create<AccountingState>()(
     {
       name: 'acculedger_accounting_store_v1',
       storage: createJSONStorage(() => electronStorage),
-      version: 3,
+      version: 4,
       migrate: (persistedState: any) => {
         if (!persistedState) return persistedState;
         // v3: single-owner — drop any legacy multi-user session payload.
@@ -1912,8 +2090,47 @@ export const useAccountingStore = create<AccountingState>()(
             updated_at: new Date().toISOString()
           };
         }
+        // v4: FY numbering — default the series start number and map for old payloads.
+        if (
+          businessSettings &&
+          (typeof businessSettings.invoice_start_number !== 'number' ||
+            !Number.isInteger(businessSettings.invoice_start_number) ||
+            businessSettings.invoice_start_number < 1)
+        ) {
+          businessSettings = {
+            ...businessSettings,
+            invoice_start_number: 1,
+            updated_at: new Date().toISOString()
+          };
+        }
+        if (
+          businessSettings &&
+          (typeof businessSettings.customer_next_number !== 'number' ||
+            !Number.isInteger(businessSettings.customer_next_number) ||
+            businessSettings.customer_next_number < 1)
+        ) {
+          businessSettings = {
+            ...businessSettings,
+            customer_next_number: 1,
+            updated_at: new Date().toISOString()
+          };
+        }
+        if (
+          businessSettings &&
+          (typeof businessSettings.document_next_number !== 'number' ||
+            !Number.isInteger(businessSettings.document_next_number) ||
+            businessSettings.document_next_number < 1)
+        ) {
+          businessSettings = {
+            ...businessSettings,
+            document_next_number: 1,
+            updated_at: new Date().toISOString()
+          };
+        }
         return {
           ...rest,
+          invoiceSeries: (rest as { invoiceSeries?: unknown }).invoiceSeries ?? {},
+          dispatchDocuments: (rest as { dispatchDocuments?: unknown }).dispatchDocuments ?? {},
           businessSettings: businessSettings ?? persistedState.businessSettings
         };
       },
@@ -1930,6 +2147,51 @@ export const useAccountingStore = create<AccountingState>()(
             default_gst_rate: 5,
             updated_at: new Date().toISOString()
           };
+        }
+        if (
+          state?.businessSettings &&
+          (typeof state.businessSettings.invoice_start_number !== 'number' ||
+            !Number.isInteger(state.businessSettings.invoice_start_number) ||
+            state.businessSettings.invoice_start_number < 1)
+        ) {
+          state.businessSettings = {
+            ...state.businessSettings,
+            invoice_start_number: 1,
+            updated_at: new Date().toISOString()
+          };
+        }
+        if (
+          state?.businessSettings &&
+          (typeof state.businessSettings.customer_next_number !== 'number' ||
+            !Number.isInteger(state.businessSettings.customer_next_number) ||
+            state.businessSettings.customer_next_number < 1)
+        ) {
+          state.businessSettings = {
+            ...state.businessSettings,
+            customer_next_number: 1,
+            updated_at: new Date().toISOString()
+          };
+        }
+        if (
+          state?.businessSettings &&
+          (typeof state.businessSettings.document_next_number !== 'number' ||
+            !Number.isInteger(state.businessSettings.document_next_number) ||
+            state.businessSettings.document_next_number < 1)
+        ) {
+          state.businessSettings = {
+            ...state.businessSettings,
+            document_next_number: 1,
+            updated_at: new Date().toISOString()
+          };
+        }
+        if (state && !state.invoiceSeries) {
+          (state as unknown as Record<string, unknown>).invoiceSeries = {};
+        }
+        if (state && !state.dispatchDocuments) {
+          (state as unknown as Record<string, unknown>).dispatchDocuments = {};
+        }
+        if (state && !(state as unknown as Record<string, unknown>).dispatchDocuments) {
+          (state as unknown as Record<string, unknown>).dispatchDocuments = {};
         }
         // Strip legacy multi-user payload if present.
         if (state && 'users' in (state as unknown as object)) delete (state as unknown as Record<string, unknown>).users;

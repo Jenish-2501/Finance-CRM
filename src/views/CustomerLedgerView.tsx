@@ -8,6 +8,7 @@ import {
   Download
 } from 'lucide-react';
 import { CustomerPicker, firstCustomerId } from '../components/common/CustomerPicker';
+import { Button, Card, Input, Label, PageHeader } from '../components/ui';
 
 interface CustomerLedgerViewProps {
   initialCustomerId?: string;
@@ -74,40 +75,32 @@ export const CustomerLedgerView: React.FC<CustomerLedgerViewProps> = ({
   return (
     <div className="space-y-6">
       {/* Top Banner (hidden in print) */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 bg-white border border-neutral-200 rounded-lg shadow-2xs no-print">
-        <div>
-          <h1 className="text-xl font-bold tracking-tight text-neutral-950">Customer Statement of Account</h1>
-          <p className="text-xs text-neutral-500 font-mono mt-0.5">
-            Strict financial ledger • Debit (Invoices) / Credit (Payments) with deterministic running balance
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handleExportCSV}
-            className="px-3 py-1.5 text-xs font-medium text-neutral-700 bg-white border border-neutral-300 rounded hover:bg-neutral-50 flex items-center gap-1.5"
-          >
-            <Download className="w-3.5 h-3.5 text-neutral-500" />
-            <span>Export CSV</span>
-          </button>
-
-          <button
-            onClick={handlePrint}
-            className="px-3.5 py-1.5 text-xs font-semibold bg-neutral-900 text-white rounded hover:bg-neutral-800 transition-colors flex items-center gap-1.5 shadow-2xs"
-          >
-            <Printer className="w-3.5 h-3.5" />
-            <span>Print Statement</span>
-          </button>
-        </div>
+      <div className="no-print">
+        <PageHeader
+          title="Customer Statement of Account"
+          subtitle="Strict financial ledger • Debit (Invoices) / Credit (Payments) with deterministic running balance"
+          actions={
+            <>
+              <Button variant="secondary" size="sm" onClick={handleExportCSV}>
+                <Download className="w-3.5 h-3.5 text-muted-foreground" />
+                <span>Export CSV</span>
+              </Button>
+              <Button variant="primary" size="md" onClick={handlePrint}>
+                <Printer className="w-3.5 h-3.5" />
+                <span>Print Statement</span>
+              </Button>
+            </>
+          }
+        />
       </div>
 
       {/* Customer & Date Filter Controls (hidden in print) */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 bg-white border border-neutral-200 rounded-lg shadow-2xs text-xs no-print">
+      <Card className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 text-xs shadow-2xs no-print">
         <div>
-          <label className="block font-semibold text-neutral-700 mb-1 flex items-center gap-1.5">
-            <Building className="w-3.5 h-3.5 text-neutral-500" />
+          <Label className="mb-1 flex items-center gap-1.5">
+            <Building className="w-3.5 h-3.5 text-muted-foreground" />
             Select Customer Account
-          </label>
+          </Label>
           <CustomerPicker
             value={effectiveCustomerId}
             onChange={(id) => setSelectedCustomerId(id)}
@@ -116,62 +109,62 @@ export const CustomerLedgerView: React.FC<CustomerLedgerViewProps> = ({
         </div>
 
         <div>
-          <label className="block font-semibold text-neutral-700 mb-1 flex items-center gap-1.5">
-            <Calendar className="w-3.5 h-3.5 text-neutral-500" />
+          <Label className="mb-1 flex items-center gap-1.5">
+            <Calendar className="w-3.5 h-3.5 text-muted-foreground" />
             Statement Date Range
-          </label>
+          </Label>
           <div className="grid grid-cols-2 gap-2">
-            <input
+            <Input
               type="date"
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
-              className="p-1.5 border border-neutral-300 rounded font-mono"
+              className="font-mono"
             />
-            <input
+            <Input
               type="date"
               value={endDate}
               onChange={(e) => setEndDate(e.target.value)}
-              className="p-1.5 border border-neutral-300 rounded font-mono"
+              className="font-mono"
             />
           </div>
         </div>
 
-        <div className="p-3 bg-neutral-50 border border-neutral-200 rounded flex flex-col justify-center">
-          <div className="text-[11px] text-neutral-500 uppercase tracking-wide font-semibold">
+        <div className="p-3 bg-muted border border-border rounded-md flex flex-col justify-center">
+          <div className="text-[11px] text-muted-foreground uppercase tracking-wide font-semibold">
             Current Outstanding Balance
           </div>
-          <div className="text-xl font-bold font-mono text-neutral-950 mt-0.5">
+          <div className="text-xl font-bold font-mono text-foreground mt-0.5">
             {formatINR(currentOutstanding)}
           </div>
         </div>
-      </div>
+      </Card>
 
       {/* Printable Statement Sheet */}
-      <div className="print-container bg-white border border-neutral-200 p-8 rounded-lg shadow-2xs space-y-6">
+      <div className="print-container bg-card border border-border p-8 rounded-lg shadow-2xs space-y-6">
         {/* Statement Header */}
         <div className="border-b-2 border-neutral-900 pb-5">
           <div className="flex justify-between items-start">
             <div>
-              <div className="text-lg font-bold text-neutral-950 uppercase">
+              <div className="text-lg font-bold text-foreground uppercase">
                 {businessSettings.legal_name || businessSettings.business_name}
               </div>
-              <div className="text-xs text-neutral-600 mt-0.5">
+              <div className="text-xs text-muted-foreground mt-0.5">
                 {businessSettings.address}, {businessSettings.city}, {businessSettings.state} -{' '}
                 {businessSettings.postal_code}
               </div>
-              <div className="text-xs font-mono text-neutral-700 mt-1">
+              <div className="text-xs font-mono text-foreground mt-1">
                 GSTIN: {businessSettings.gst_number} • PAN: {businessSettings.pan}
               </div>
             </div>
 
             <div className="text-right">
-              <div className="text-sm font-bold font-mono uppercase tracking-wider text-neutral-900">
+              <div className="text-sm font-bold font-mono uppercase tracking-wider text-foreground">
                 STATEMENT OF ACCOUNT
               </div>
-              <div className="text-xs font-mono text-neutral-500 mt-1">
+              <div className="text-xs font-mono text-muted-foreground mt-1">
                 Period: {startDate} to {endDate}
               </div>
-              <div className="text-xs text-neutral-400 font-mono">
+              <div className="text-xs text-muted-foreground font-mono">
                 Generated: {new Date().toLocaleDateString()}
               </div>
             </div>
@@ -180,28 +173,28 @@ export const CustomerLedgerView: React.FC<CustomerLedgerViewProps> = ({
 
         {/* Customer Details Box */}
         {customer && (
-          <div className="p-4 bg-neutral-50 border border-neutral-200 rounded text-xs grid grid-cols-2 gap-4">
+          <div className="p-4 bg-muted border border-border rounded text-xs grid grid-cols-2 gap-4">
             <div>
-              <div className="text-[10px] font-semibold text-neutral-500 uppercase">Statement For:</div>
-              <div className="font-bold text-sm text-neutral-950 mt-0.5">{customer.customer_name}</div>
-              <div className="text-neutral-600 mt-0.5">
+              <div className="text-[10px] font-semibold text-muted-foreground uppercase">Statement For:</div>
+              <div className="font-bold text-sm text-foreground mt-0.5">{customer.customer_name}</div>
+              <div className="text-muted-foreground mt-0.5">
                 {customer.address}, {customer.city}, {customer.state} - {customer.postal_code}
               </div>
-              <div className="font-mono text-neutral-700 mt-1">
+              <div className="font-mono text-foreground mt-1">
                 GSTIN: {customer.gst_number || 'Unregistered'} • Phone: {customer.mobile}
               </div>
             </div>
 
             <div className="text-right font-mono text-xs space-y-1">
               <div>
-                <span className="text-neutral-500">Total Invoiced (Debits):</span>{' '}
-                <span className="font-semibold text-neutral-900">{formatINR(totalDebits)}</span>
+                <span className="text-muted-foreground">Total Invoiced (Debits):</span>{' '}
+                <span className="font-semibold text-foreground">{formatINR(totalDebits)}</span>
               </div>
               <div>
-                <span className="text-neutral-500">Total Receipts (Credits):</span>{' '}
-                <span className="font-semibold text-emerald-800">{formatINR(totalCredits)}</span>
+                <span className="text-muted-foreground">Total Receipts (Credits):</span>{' '}
+                <span className="font-semibold text-emerald-800 dark:text-emerald-300">{formatINR(totalCredits)}</span>
               </div>
-              <div className="border-t border-neutral-300 pt-1 text-sm font-bold text-neutral-950">
+              <div className="border-t border-input pt-1 text-sm font-bold text-foreground">
                 <span>Closing Balance:</span> <span>{formatINR(currentOutstanding)}</span>
               </div>
             </div>
@@ -213,7 +206,7 @@ export const CustomerLedgerView: React.FC<CustomerLedgerViewProps> = ({
           <table className="w-full text-left text-xs border-collapse">
             <caption className="sr-only">Customer financial transactions ledger</caption>
             <thead>
-              <tr className="border-y border-neutral-800 bg-neutral-100 font-mono text-neutral-700 text-[11px]">
+              <tr className="border-y border-foreground bg-muted font-mono text-foreground text-[11px]">
                 <th scope="col" className="py-2.5 px-3">Date</th>
                 <th scope="col" className="py-2.5 px-3">Type</th>
                 <th scope="col" className="py-2.5 px-3">Reference #</th>
@@ -223,17 +216,17 @@ export const CustomerLedgerView: React.FC<CustomerLedgerViewProps> = ({
                 <th scope="col" className="py-2.5 px-4 text-right">Running Balance</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-neutral-200 font-mono text-[11px]">
+            <tbody className="divide-y divide-border font-mono text-[11px]">
               {filteredLedger.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-8 text-center text-neutral-400 font-sans">
+                  <td colSpan={7} className="py-8 text-center text-muted-foreground font-sans">
                     No transactions found for this customer account in the selected period.
                   </td>
                 </tr>
               ) : (
                 filteredLedger.map((row, idx) => (
-                  <tr key={idx} className="hover:bg-neutral-50/70">
-                    <td className="py-2.5 px-3 text-neutral-500">
+                  <tr key={idx} className="hover:bg-muted/70">
+                    <td className="py-2.5 px-3 text-muted-foreground">
                       {new Date(row.date).toLocaleDateString()}
                     </td>
 
@@ -241,19 +234,19 @@ export const CustomerLedgerView: React.FC<CustomerLedgerViewProps> = ({
                       <span
                         className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${
                           row.type === 'INVOICE'
-                            ? 'bg-neutral-100 text-neutral-800 border-neutral-300'
-                            : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                            ? 'bg-muted text-foreground border-input'
+                            : 'bg-emerald-500/10 text-emerald-800 dark:text-emerald-300 border-emerald-500/25'
                         }`}
                       >
                         {row.type}
                       </span>
                     </td>
 
-                    <td className="py-2.5 px-3 font-semibold text-neutral-900">
+                    <td className="py-2.5 px-3 font-semibold text-foreground">
                       {row.type === 'INVOICE' && onOpenInvoice ? (
                         <button
                           onClick={() => onOpenInvoice(row.referenceId)}
-                          className="hover:underline text-neutral-950 font-bold"
+                          className="hover:underline text-foreground font-bold"
                         >
                           {row.referenceNumber}
                         </button>
@@ -262,19 +255,19 @@ export const CustomerLedgerView: React.FC<CustomerLedgerViewProps> = ({
                       )}
                     </td>
 
-                    <td className="py-2.5 px-4 font-sans text-neutral-700">
+                    <td className="py-2.5 px-4 font-sans text-foreground">
                       {row.description}
                     </td>
 
-                    <td className="py-2.5 px-3 text-right font-medium text-neutral-950">
+                    <td className="py-2.5 px-3 text-right font-medium text-foreground">
                       {row.debit > 0 ? formatINR(row.debit) : '-'}
                     </td>
 
-                    <td className="py-2.5 px-3 text-right font-medium text-emerald-800">
+                    <td className="py-2.5 px-3 text-right font-medium text-emerald-800 dark:text-emerald-300">
                       {row.credit > 0 ? formatINR(row.credit) : '-'}
                     </td>
 
-                    <td className="py-2.5 px-4 text-right font-bold text-neutral-950">
+                    <td className="py-2.5 px-4 text-right font-bold text-foreground">
                       {formatINR(row.balance)}
                     </td>
                   </tr>
@@ -282,20 +275,20 @@ export const CustomerLedgerView: React.FC<CustomerLedgerViewProps> = ({
               )}
             </tbody>
             <tfoot>
-              <tr className="border-t-2 border-neutral-800 font-mono text-xs font-bold bg-neutral-50">
-                <td colSpan={4} className="py-3 px-4 text-right uppercase text-neutral-600">
+              <tr className="border-t-2 border-foreground font-mono text-xs font-bold bg-muted">
+                <td colSpan={4} className="py-3 px-4 text-right uppercase text-muted-foreground">
                   Period Totals / Net Balance:
                 </td>
-                <td className="py-3 px-3 text-right text-neutral-950">{formatINR(totalDebits)}</td>
-                <td className="py-3 px-3 text-right text-emerald-800">{formatINR(totalCredits)}</td>
-                <td className="py-3 px-4 text-right text-neutral-950">{formatINR(currentOutstanding)}</td>
+                <td className="py-3 px-3 text-right text-foreground">{formatINR(totalDebits)}</td>
+                <td className="py-3 px-3 text-right text-emerald-800 dark:text-emerald-300">{formatINR(totalCredits)}</td>
+                <td className="py-3 px-4 text-right text-foreground">{formatINR(currentOutstanding)}</td>
               </tr>
             </tfoot>
           </table>
         </div>
 
         {/* Accounting Rule Notice */}
-        <div className="pt-4 border-t border-neutral-200 text-neutral-400 text-[10px] font-mono">
+        <div className="pt-4 border-t border-border text-muted-foreground text-[10px] font-mono">
           Note: In accordance with Indian accounting standards (AS-9/Ind AS 115), consignment inventory dispatches and returns are operational movements and do not constitute financial debits or credits until invoiced.
         </div>
       </div>

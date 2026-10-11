@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { useAccountingStore } from '../store/accountingStore';
-import { formatINR, roundCurrency } from '../utils/calculations';
+import { formatINR, roundCurrency, getCustomerStateCode } from '../utils/calculations';
 import {
   Download
 } from 'lucide-react';
+import { Button, CardHeader, KpiCard, PageHeader, TableShell, Table, THead, TBody, TR, TH, TD, Well, Tabs } from '../components/ui';
 
 export const ReportsView: React.FC = () => {
   const {
@@ -107,260 +108,218 @@ export const ReportsView: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Header & Controls */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 bg-white border border-neutral-200 rounded-lg shadow-2xs">
-        <div>
-          <h1 className="text-xl font-bold tracking-tight text-neutral-950">Financial &amp; Statutory Reports</h1>
-          <p className="text-xs text-neutral-500 font-mono mt-0.5">
-            Normalized ledger extracts • GST GSTR-1 preparation • Receivables aging &amp; consignment audits
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {activeReport === 'sales' && (
-            <button
-              onClick={handleExportSales}
-              className="px-3.5 py-1.5 text-xs font-semibold bg-neutral-900 text-white rounded hover:bg-neutral-800 transition-colors flex items-center gap-1.5 shadow-2xs"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>Export Sales CSV</span>
-            </button>
-          )}
-
-          {activeReport === 'receivables' && (
-            <button
-              onClick={handleExportReceivables}
-              className="px-3.5 py-1.5 text-xs font-semibold bg-neutral-900 text-white rounded hover:bg-neutral-800 transition-colors flex items-center gap-1.5 shadow-2xs"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>Export Receivables CSV</span>
-            </button>
-          )}
-        </div>
-      </div>
+      <PageHeader
+        title="Financial & Statutory Reports"
+        subtitle="Normalized ledger extracts • GST GSTR-1 preparation • Receivables aging & consignment audits"
+        actions={
+          <>
+            {activeReport === 'sales' && (
+              <Button variant="primary" size="sm" onClick={handleExportSales}>
+                <Download className="w-3.5 h-3.5" />
+                <span>Export Sales CSV</span>
+              </Button>
+            )}
+            {activeReport === 'receivables' && (
+              <Button variant="primary" size="sm" onClick={handleExportReceivables}>
+                <Download className="w-3.5 h-3.5" />
+                <span>Export Receivables CSV</span>
+              </Button>
+            )}
+          </>
+        }
+      />
 
       {/* Report Selection Tabs */}
-      <div
-        role="tablist"
-        aria-label="Reports"
-        onKeyDown={(e) => {
-          if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(e.key)) return;
-          e.preventDefault();
-          const tabs = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]'));
-          const current = tabs.indexOf(document.activeElement as HTMLElement);
-          const nextIndex =
-            e.key === 'ArrowRight' ? (current + 1) % tabs.length
-            : e.key === 'ArrowLeft' ? (current - 1 + tabs.length) % tabs.length
-            : e.key === 'Home' ? 0 : tabs.length - 1;
-          tabs[nextIndex]?.focus();
-          tabs[nextIndex]?.click();
-        }}
-        className="flex border-b border-neutral-200 gap-6 text-xs font-medium text-neutral-500 overflow-x-auto"
-      >
-        {[
+      <Tabs
+        ariaLabel="Reports"
+        activeId={activeReport}
+        onSelect={(id) => setActiveReport(id as 'sales' | 'receivables' | 'gst' | 'inventory' | 'consignments')}
+        tabs={[
           { id: 'sales', label: 'Sales & Invoice Register' },
           { id: 'receivables', label: 'Receivables & Credit Summary' },
           { id: 'gst', label: 'GST / Tax Compliance (GSTR-1)' },
           { id: 'inventory', label: 'Warehouse Stock Valuation' },
-          { id: 'consignments', label: 'Customer Consignment Balances' }
-        ].map((t) => (
-          <button
-            key={t.id}
-            role="tab"
-            aria-selected={activeReport === t.id}
-            onClick={() => setActiveReport(t.id as any)}
-            className={`pb-2.5 transition-colors border-b-2 -mb-px whitespace-nowrap ${
-              activeReport === t.id
-                ? 'border-neutral-900 text-neutral-900 font-semibold'
-                : 'border-transparent hover:text-neutral-800'
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
+          { id: 'consignments', label: 'Customer Consignment Balances' },
+        ]}
+      />
 
       {/* Report 1: Sales & Invoice Register */}
       {activeReport === 'sales' && (
-        <div className="bg-white border border-neutral-200 rounded-lg shadow-2xs overflow-hidden">
-          <div className="p-4 border-b border-neutral-200 bg-neutral-50/70 flex justify-between items-center text-xs">
-            <span className="font-bold text-neutral-900 uppercase tracking-wide">
+        <TableShell>
+          <CardHeader>
+            <span className="font-bold text-foreground uppercase tracking-wide text-xs">
               Finalized Sales Invoices ({finalizedInvoices.length})
             </span>
-            <div className="font-mono text-neutral-600">
+            <div className="font-mono text-muted-foreground text-xs">
               Total Sales Volume:{' '}
-              <span className="font-bold text-neutral-950">
+              <span className="font-bold text-foreground">
                 {formatINR(finalizedInvoices.reduce((s, i) => s + i.grand_total, 0))}
               </span>
             </div>
-          </div>
+          </CardHeader>
 
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
+            <Table className="text-left border-collapse">
             <caption className="sr-only">Sales and invoice register report</caption>
-            <thead>
-              <tr className="border-b border-neutral-200 bg-neutral-50/80 font-mono text-neutral-600 text-[11px]">
-                <th scope="col" className="py-3 px-4">Invoice #</th>
-                  <th scope="col" className="py-3 px-3">Date</th>
-                  <th scope="col" className="py-3 px-3">Customer Entity</th>
-                  <th scope="col" className="py-3 px-3 text-right">Taxable</th>
-                  <th scope="col" className="py-3 px-3 text-right">CGST</th>
-                  <th scope="col" className="py-3 px-3 text-right">SGST</th>
-                  <th scope="col" className="py-3 px-3 text-right">IGST</th>
-                  <th scope="col" className="py-3 px-4 text-right">Grand Total</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-neutral-200 font-mono text-[11px]">
+            <THead>
+              <TR className="hover:bg-transparent">
+                <TH scope="col">Invoice #</TH>
+                  <TH scope="col">Date</TH>
+                  <TH scope="col">Customer Entity</TH>
+                  <TH scope="col" className="text-right">Taxable</TH>
+                  <TH scope="col" className="text-right">CGST</TH>
+                  <TH scope="col" className="text-right">SGST</TH>
+                  <TH scope="col" className="text-right">IGST</TH>
+                  <TH scope="col" className="text-right px-4">Grand Total</TH>
+              </TR>
+            </THead>
+            <TBody className="font-mono text-[11px]">
                 {finalizedInvoices.map((inv) => (
-                  <tr key={inv.id} className="hover:bg-neutral-50/70">
-                    <td className="py-3 px-4 font-bold text-neutral-900">{inv.invoice_number}</td>
-                    <td className="py-3 px-3 text-neutral-500">
+                  <TR key={inv.id}>
+                    <TD className="font-bold">{inv.invoice_number}</TD>
+                    <TD className="text-muted-foreground">
                       {new Date(inv.invoice_date).toLocaleDateString()}
-                    </td>
-                    <td className="py-3 px-3 font-sans font-semibold text-neutral-900">
+                    </TD>
+                    <TD className="font-sans font-semibold">
                       {inv.customer_snapshot.customer_name}
-                    </td>
-                    <td className="py-3 px-3 text-right text-neutral-700">{formatINR(inv.taxable_amount)}</td>
-                    <td className="py-3 px-3 text-right text-neutral-600">{formatINR(inv.cgst)}</td>
-                    <td className="py-3 px-3 text-right text-neutral-600">{formatINR(inv.sgst)}</td>
-                    <td className="py-3 px-3 text-right text-neutral-600">{formatINR(inv.igst)}</td>
-                    <td className="py-3 px-4 text-right font-bold text-neutral-950">{formatINR(inv.grand_total)}</td>
-                  </tr>
+                    </TD>
+                    <TD className="text-right">{formatINR(inv.taxable_amount)}</TD>
+                    <TD className="text-right text-muted-foreground">{formatINR(inv.cgst)}</TD>
+                    <TD className="text-right text-muted-foreground">{formatINR(inv.sgst)}</TD>
+                    <TD className="text-right text-muted-foreground">{formatINR(inv.igst)}</TD>
+                    <TD className="text-right font-bold">{formatINR(inv.grand_total)}</TD>
+                  </TR>
                 ))}
-              </tbody>
-            </table>
+              </TBody>
+            </Table>
           </div>
-        </div>
+        </TableShell>
       )}
 
       {/* Report 2: Receivables Summary */}
       {activeReport === 'receivables' && (
-        <div className="bg-white border border-neutral-200 rounded-lg shadow-2xs overflow-hidden">
+        <TableShell>
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
+            <Table className="text-left border-collapse">
             <caption className="sr-only">Receivables and credit summary report</caption>
-            <thead>
-              <tr className="border-b border-neutral-200 bg-neutral-50/80 font-mono text-neutral-600 text-[11px]">
-                <th scope="col" className="py-3 px-4">Customer Entity</th>
-                  <th scope="col" className="py-3 px-3">Location</th>
-                  <th scope="col" className="py-3 px-3 text-right">Total Invoiced (Debits)</th>
-                  <th scope="col" className="py-3 px-3 text-right">Total Collected (Credits)</th>
-                  <th scope="col" className="py-3 px-4 text-right">Net Outstanding Balance</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-neutral-200 font-sans">
+            <THead>
+              <TR className="hover:bg-transparent">
+                <TH scope="col">Customer Entity</TH>
+                  <TH scope="col">Location</TH>
+                  <TH scope="col" className="text-right">Total Invoiced (Debits)</TH>
+                  <TH scope="col" className="text-right">Total Collected (Credits)</TH>
+                  <TH scope="col" className="text-right px-4">Net Outstanding Balance</TH>
+              </TR>
+            </THead>
+            <TBody>
                 {receivablesData.map((row) => (
-                  <tr key={row.customerId} className="hover:bg-neutral-50/70">
-                    <td className="py-3 px-4 font-semibold text-neutral-900">{row.customerName}</td>
-                    <td className="py-3 px-3 text-neutral-500 font-mono text-[11px]">
+                  <TR key={row.customerId}>
+                    <TD className="font-semibold">{row.customerName}</TD>
+                    <TD className="text-muted-foreground font-mono text-[11px]">
                       {row.city}, {row.state}
-                    </td>
-                    <td className="py-3 px-3 text-right font-mono text-neutral-700">
+                    </TD>
+                    <TD className="text-right font-mono">
                       {formatINR(row.totalBilled)}
-                    </td>
-                    <td className="py-3 px-3 text-right font-mono text-emerald-800">
+                    </TD>
+                    <TD className="text-right font-mono text-emerald-800 dark:text-emerald-300">
                       {formatINR(row.totalPaid)}
-                    </td>
-                    <td className="py-3 px-4 text-right font-mono font-bold text-sm">
-                      <span className={row.outstanding > 0 ? 'text-amber-800' : 'text-emerald-800'}>
+                    </TD>
+                    <TD className="text-right font-mono font-bold text-sm">
+                      <span className={row.outstanding > 0 ? 'text-amber-800 dark:text-amber-300' : 'text-emerald-800 dark:text-emerald-300'}>
                         {formatINR(row.outstanding)}
                       </span>
-                    </td>
-                  </tr>
+                    </TD>
+                  </TR>
                 ))}
-              </tbody>
-            </table>
+              </TBody>
+            </Table>
           </div>
-        </div>
+        </TableShell>
       )}
 
       {/* Report 3: GST Tax Summary */}
       {activeReport === 'gst' && (
         <div className="space-y-6">
           <div className="grid grid-cols-4 gap-4">
-            <div className="p-4 bg-white border border-neutral-200 rounded-lg shadow-2xs">
-              <div className="text-[11px] font-semibold text-neutral-500 uppercase">Total Taxable Value</div>
-              <div className="mt-1 text-xl font-bold font-mono text-neutral-950">{formatINR(totalTaxable)}</div>
-            </div>
-            <div className="p-4 bg-white border border-neutral-200 rounded-lg shadow-2xs">
-              <div className="text-[11px] font-semibold text-neutral-500 uppercase">Total CGST (Intra-state)</div>
-              <div className="mt-1 text-xl font-bold font-mono text-neutral-950">{formatINR(totalCGST)}</div>
-            </div>
-            <div className="p-4 bg-white border border-neutral-200 rounded-lg shadow-2xs">
-              <div className="text-[11px] font-semibold text-neutral-500 uppercase">Total SGST (Intra-state)</div>
-              <div className="mt-1 text-xl font-bold font-mono text-neutral-950">{formatINR(totalSGST)}</div>
-            </div>
-            <div className="p-4 bg-white border border-neutral-200 rounded-lg shadow-2xs">
-              <div className="text-[11px] font-semibold text-neutral-500 uppercase">Total IGST (Inter-state)</div>
-              <div className="mt-1 text-xl font-bold font-mono text-sky-800">{formatINR(totalIGST)}</div>
-            </div>
+            <KpiCard label="Total Taxable Value" value={formatINR(totalTaxable)} />
+            <KpiCard label="Total CGST (Intra-state)" value={formatINR(totalCGST)} />
+            <KpiCard label="Total SGST (Intra-state)" value={formatINR(totalSGST)} />
+            <KpiCard
+              label="Total IGST (Inter-state)"
+              value={formatINR(totalIGST)}
+              tone="info"
+              valueClassName="text-sky-800 dark:text-sky-300"
+            />
           </div>
 
-          <div className="p-4 bg-neutral-50 border border-neutral-200 rounded-lg text-xs space-y-2">
-            <div className="font-bold text-neutral-900">Total Statutory Tax Liability: {formatINR(totalTaxCollected)}</div>
-            <div className="text-neutral-600 leading-relaxed">
+          <Well className="text-xs space-y-2">
+            <div className="font-bold text-foreground">Total Statutory Tax Liability: {formatINR(totalTaxCollected)}</div>
+            <div className="text-muted-foreground leading-relaxed">
               Inter-state transactions (customers with state code other than 24) are charged IGST {businessSettings.default_gst_rate}%. Intra-state supplies within Gujarat are split equally into CGST {businessSettings.default_gst_rate / 2}% and SGST {businessSettings.default_gst_rate / 2}%.
             </div>
-          </div>
+          </Well>
         </div>
       )}
 
       {/* Report 4: Inventory Valuation */}
       {activeReport === 'inventory' && (
-        <div className="bg-white border border-neutral-200 rounded-lg shadow-2xs overflow-hidden">
-          <table className="w-full text-left text-xs border-collapse">
+        <TableShell>
+          <Table className="text-left border-collapse">
             <caption className="sr-only">Warehouse stock valuation report</caption>
-            <thead>
-              <tr className="border-b border-neutral-200 bg-neutral-50/80 font-mono text-neutral-600 text-[11px]">
-                <th scope="col" className="py-3 px-4">Product Name</th>
-                <th scope="col" className="py-3 px-3">SKU</th>
-                <th scope="col" className="py-3 px-3 text-right">Physical Warehouse Stock</th>
-                <th scope="col" className="py-3 px-3 text-right">UOM</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-neutral-200 font-sans">
+            <THead>
+              <TR className="hover:bg-transparent">
+                <TH scope="col">Product Name</TH>
+                <TH scope="col">SKU</TH>
+                <TH scope="col" className="text-right">Physical Warehouse Stock</TH>
+                <TH scope="col" className="text-right">UOM</TH>
+              </TR>
+            </THead>
+            <TBody>
               {Object.values(products).map((p) => {
                 const stock = getCurrentCompanyStock(p.id);
                 const uom = uoms[p.primary_unit_id];
                 return (
-                  <tr key={p.id} className="hover:bg-neutral-50/70">
-                    <td className="py-3 px-4 font-semibold text-neutral-900">{p.product_name}</td>
-                    <td className="py-3 px-3 font-mono text-neutral-500 text-[11px]">{p.sku}</td>
-                    <td className="py-3 px-3 text-right font-mono font-bold text-neutral-950">{stock.toLocaleString()}</td>
-                    <td className="py-3 px-3 text-right font-mono text-neutral-600">{uom?.code}</td>
-                  </tr>
+                  <TR key={p.id}>
+                    <TD className="font-semibold">{p.product_name}</TD>
+                    <TD className="font-mono text-muted-foreground text-[11px]">{p.sku}</TD>
+                    <TD className="text-right font-mono font-bold">{stock.toLocaleString()}</TD>
+                    <TD className="text-right font-mono text-muted-foreground">{uom?.code}</TD>
+                  </TR>
                 );
               })}
-            </tbody>
-          </table>
-        </div>
+            </TBody>
+          </Table>
+        </TableShell>
       )}
 
       {/* Report 5: Consignments */}
       {activeReport === 'consignments' && (
-        <div className="bg-white border border-neutral-200 rounded-lg shadow-2xs overflow-hidden">
-          <div className="p-4 border-b border-neutral-200 bg-neutral-50/70 text-xs text-neutral-600">
-            Consignment stock physically held across client locations.
-          </div>
-          <table className="w-full text-left text-xs border-collapse">
+        <TableShell>
+          <CardHeader>
+            <span className="text-xs text-muted-foreground">
+              Consignment stock physically held across client locations.
+            </span>
+          </CardHeader>
+          <Table className="text-left border-collapse">
             <caption className="sr-only">Customer consignment balances report</caption>
-            <thead>
-              <tr className="border-b border-neutral-200 bg-neutral-50/80 font-mono text-neutral-600 text-[11px]">
-                <th scope="col" className="py-3 px-4">Client Consignee</th>
-                <th scope="col" className="py-3 px-3">State</th>
-                <th scope="col" className="py-3 px-3">Location</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-neutral-200 font-sans">
+            <THead>
+              <TR className="hover:bg-transparent">
+                <TH scope="col">Client Consignee</TH>
+                <TH scope="col">State</TH>
+                <TH scope="col">Location</TH>
+              </TR>
+            </THead>
+            <TBody>
               {Object.values(customers).map((c) => (
-                <tr key={c.id} className="hover:bg-neutral-50/70">
-                  <td className="py-3 px-4 font-semibold text-neutral-900">{c.customer_name}</td>
-                  <td className="py-3 px-3 font-mono text-[11px]">{c.state} ({c.state_code})</td>
-                  <td className="py-3 px-3 text-neutral-600">{c.city}</td>
-                </tr>
+                <TR key={c.id}>
+                  <TD className="font-semibold">{c.customer_name}</TD>
+                  <TD className="font-mono text-[11px]">{c.state} ({getCustomerStateCode(c)})</TD>
+                  <TD className="text-muted-foreground">{c.city}</TD>
+                </TR>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </TBody>
+          </Table>
+        </TableShell>
       )}
     </div>
   );

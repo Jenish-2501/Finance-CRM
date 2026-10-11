@@ -20,6 +20,9 @@ export const businessSettings = sqliteTable('business_settings', {
   branch: text('branch').notNull(),
   invoicePrefix: text('invoice_prefix').notNull(),
   invoiceNextNumber: integer('invoice_next_number').notNull(),
+  invoiceStartNumber: integer('invoice_start_number').notNull(), // first number of each FY series
+  customerNextNumber: integer('customer_next_number').notNull(), // floor for auto customer numbers
+  documentNextNumber: integer('document_next_number').notNull(), // floor for auto dispatch-document numbers
   currency: text('currency').notNull(),
   defaultGstRate: real('default_gst_rate').notNull(),
   stateCode: text('state_code').notNull(),

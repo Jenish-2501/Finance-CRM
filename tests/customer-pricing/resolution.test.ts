@@ -81,7 +81,7 @@ describe('customer pricing — validation', () => {
     const created = state().createCustomer({
       customer_name: 'Price Test Co',
       customer_number: 'CP-T1',
-      pan: '', gst_number: '', email: '', mobile: '', address: '', city: '', state: '', country: '', postal_code: '', state_code: '24',
+      pan: '', gst_number: '', mobile: '', address: '', city: '', state: '', country: '', postal_code: '',
       is_active: true,
     });
     expect(created.success).toBe(true);

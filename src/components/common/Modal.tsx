@@ -99,20 +99,20 @@ export const Modal: React.FC<ModalProps> = ({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className={`relative w-full ${maxWidthClasses[maxWidth]} my-8 bg-white border border-neutral-200 rounded-lg shadow-2xl flex flex-col max-h-[90vh]`}
+        className={`relative w-full ${maxWidthClasses[maxWidth]} my-8 bg-popover text-popover-foreground border border-border rounded-lg shadow-2xl flex flex-col max-h-[90vh]`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-200 bg-neutral-50/70 rounded-t-lg shrink-0">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-muted/70 rounded-t-lg shrink-0">
           <div>
-            <h3 id={titleId} className="text-base font-semibold text-neutral-900">{title}</h3>
-            {subtitle && <p className="text-xs text-neutral-500 mt-0.5">{subtitle}</p>}
+            <h3 id={titleId} className="text-base font-semibold text-foreground">{title}</h3>
+            {subtitle && <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>}
           </div>
           <button
             onClick={onClose}
             aria-label={`Close ${title} dialog`}
             data-autofocus
-            className="p-1 text-neutral-400 hover:text-neutral-700 hover:bg-neutral-200/60 rounded transition-colors"
+            className="p-1 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors"
             title="Close modal (Esc)"
           >
             <X className="w-5 h-5" aria-hidden="true" />
@@ -124,7 +124,7 @@ export const Modal: React.FC<ModalProps> = ({
 
         {/* Footer */}
         {footer && (
-          <div className="flex items-center justify-end gap-3 px-6 py-3.5 border-t border-neutral-200 bg-neutral-50 rounded-b-lg shrink-0">
+          <div className="flex items-center justify-end gap-3 px-6 py-3.5 border-t border-border bg-muted rounded-b-lg shrink-0">
             {footer}
           </div>
         )}

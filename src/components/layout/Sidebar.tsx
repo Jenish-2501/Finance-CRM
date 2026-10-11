@@ -86,15 +86,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab }) => 
   ];
 
   return (
-    <aside className="w-64 bg-neutral-900 text-neutral-300 flex flex-col shrink-0 border-r border-neutral-800 select-none no-print">
+    <aside className="w-64 bg-sidebar text-sidebar-foreground flex flex-col shrink-0 border-r border-sidebar-border select-none no-print">
       {/* Brand logo & product title */}
-      <div className="h-16 flex items-center px-6 border-b border-neutral-800 gap-3">
-        <div className="w-7 h-7 bg-white text-neutral-950 font-bold flex items-center justify-center rounded text-xs font-mono">
+      <div className="h-16 flex items-center px-6 border-b border-sidebar-border gap-3">
+        <div className="w-7 h-7 bg-sidebar-primary text-sidebar-primary-foreground font-bold flex items-center justify-center rounded-md text-xs font-mono">
           ₹
         </div>
         <div>
-          <div className="text-sm font-bold text-white tracking-wide">AccuLedger</div>
-          <div className="text-[10px] text-neutral-400 font-mono tracking-tight uppercase">
+          <div className="text-sm font-bold text-sidebar-foreground tracking-wide">AccuLedger</div>
+          <div className="text-[10px] text-muted-foreground font-mono tracking-tight uppercase">
             Enterprise ERP Prototype
           </div>
         </div>
@@ -104,7 +104,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab }) => 
       <nav aria-label="Primary" className="flex-1 py-4 px-3 overflow-y-auto space-y-6">
         {navSections.map((sec) => (
           <div key={sec.title}>
-            <div className="text-[10px] font-mono tracking-wider font-semibold text-neutral-500 uppercase px-3 mb-1.5">
+            <div className="text-[10px] font-mono tracking-wider font-semibold text-muted-foreground uppercase px-3 mb-1.5">
               {sec.title}
             </div>
             <div className="space-y-0.5">
@@ -116,13 +116,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab }) => 
                     key={item.id}
                     onClick={() => onSelectTab(item.id)}
                     aria-current={isActive ? 'page' : undefined}
-                    className={`w-full flex items-center gap-3 px-3 py-2 text-xs font-medium rounded transition-colors text-left ${
+                    className={`w-full flex items-center gap-3 px-3 py-2 text-xs font-medium rounded-md transition-colors text-left ${
                       isActive
-                        ? 'bg-neutral-800 text-white font-semibold shadow-2xs border-l-2 border-white'
-                        : 'text-neutral-400 hover:text-white hover:bg-neutral-800/60'
+                        ? 'bg-sidebar-accent text-sidebar-accent-foreground font-semibold shadow-2xs border-l-2 border-sidebar-primary'
+                        : 'text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent/60'
                     }`}
                   >
-                    <Icon className={`w-4 h-4 ${isActive ? 'text-white' : 'text-neutral-400'}`} />
+                    <Icon className={`w-4 h-4 ${isActive ? 'text-sidebar-accent-foreground' : 'text-muted-foreground'}`} />
                     <span>{item.label}</span>
                   </button>
                 );
@@ -133,9 +133,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab }) => 
       </nav>
 
       {/* Footnote / Architecture info */}
-      <div className="p-4 border-t border-neutral-800 text-[11px] text-neutral-500 font-mono">
+      <div className="p-4 border-t border-sidebar-border text-[11px] text-muted-foreground font-mono">
         <div>Zustand Relational Store</div>
-        <div className="text-[10px] text-neutral-400">PostgreSQL Schema Contract</div>
+        <div className="text-[10px] opacity-80">PostgreSQL Schema Contract</div>
       </div>
     </aside>
   );

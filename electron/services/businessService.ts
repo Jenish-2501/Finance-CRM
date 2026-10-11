@@ -68,6 +68,9 @@ const WRITABLE_SETTINGS_FIELDS = new Set([
   'branch',
   'invoice_prefix',
   'invoice_next_number',
+  'invoice_start_number',
+  'customer_next_number',
+  'document_next_number',
   'currency',
   'default_gst_rate',
   'state_code',
@@ -135,6 +138,30 @@ function validateSettingsRow(row: SettingsRow): SettingsResult | null {
     row.invoice_next_number > 999999999
   ) {
     return fail('INVALID_NEXT_NUMBER', 'Next sequence number must be a whole number of 1 or more.');
+  }
+  if (
+    typeof row.invoice_start_number !== 'number' ||
+    !Number.isInteger(row.invoice_start_number) ||
+    row.invoice_start_number < 1 ||
+    row.invoice_start_number > 999999999
+  ) {
+    return fail('INVALID_START_NUMBER', 'FY start number must be a whole number of 1 or more.');
+  }
+  if (
+    typeof row.customer_next_number !== 'number' ||
+    !Number.isInteger(row.customer_next_number) ||
+    row.customer_next_number < 1 ||
+    row.customer_next_number > 999999999
+  ) {
+    return fail('INVALID_CUSTOMER_NEXT_NUMBER', 'Customer next number must be a whole number of 1 or more.');
+  }
+  if (
+    typeof row.document_next_number !== 'number' ||
+    !Number.isInteger(row.document_next_number) ||
+    row.document_next_number < 1 ||
+    row.document_next_number > 999999999
+  ) {
+    return fail('INVALID_DOCUMENT_NEXT_NUMBER', 'Document next number must be a whole number of 1 or more.');
   }
   if (typeof row.default_gst_rate !== 'number' || !GST_SLABS.includes(row.default_gst_rate)) {
     return fail(

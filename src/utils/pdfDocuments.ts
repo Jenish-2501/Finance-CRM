@@ -366,11 +366,6 @@ export interface ChallanPdfInput {
   business: BusinessSettings;
   customer: Customer;
   primaryMovement: CustomerInventoryMovement & {
-    dispatch_purpose?: string;
-    vehicle_number?: string;
-    transporter_name?: string;
-    eway_bill_number?: string;
-    notes?: string;
     movement_date?: string;
   };
   copyLabel: string;
@@ -381,7 +376,6 @@ export interface ChallanPdfInput {
     productName: string;
     description?: string;
     sku: string;
-    hsnCode: string;
     quantity: number;
     unitCode: string;
     indicativePrice: number;
@@ -409,7 +403,6 @@ export function buildChallanPdf(input: ChallanPdfInput): jsPDF {
       ['Challan Number:', str(mov.reference_id)],
       ['Challan Date:', str(input.challanDate)],
       ['Time of Removal:', str(input.timeOfRemoval)],
-      ['Nature of Movement:', str(mov.dispatch_purpose || 'Consignment Transfer / Holding').substring(0, 34)]
     ]
   });
 
@@ -428,57 +421,33 @@ export function buildChallanPdf(input: ChallanPdfInput): jsPDF {
   doc.text(`${str(cust.city, '')}, ${str(cust.state, '')} | GSTIN ${str(cust.gst_number, 'Unregistered')}`.substring(0, 48), 110, y);
   y += 4.5;
   doc.text(`Contact: ${str(biz.phone, '-')} | ${str(biz.email, '-')}`.substring(0, 48), MARGIN, y);
-  doc.text(`Contact: ${str(cust.mobile, '-')} | ${str(cust.email, '-')}`.substring(0, 48), 110, y);
+  doc.text(`Contact: ${str(cust.mobile, '-')}`.substring(0, 48), 110, y);
   y += 7;
 
-  // Transport
-  y = sectionLabel(doc, 'Transportation & Logistics', y);
-  doc.setFont(MONO, 'normal');
-  doc.setFontSize(7.5);
+  // Place of supply (transport capture removed — challans carry no logistics data)
+  y = sectionLabel(doc, 'Place of Supply', y);
+  doc.setFont(MONO, 'bold');
+  doc.setFontSize(8);
   doc.setTextColor(...INK);
-  const tCols: Array<[string, string]> = [
-    ['Vehicle:', str(mov.vehicle_number || 'GJ-05-BX-4921 (Authorized)')],
-    ['Transporter:', str(mov.transporter_name || 'Direct Road Logistics / Transport')],
-    ['E-Way Bill:', str(mov.eway_bill_number || 'EWB-2026-N/A')],
-    ['Place of Supply:', `${str(cust.city, '')}, ${str(cust.state, '')}`]
-  ];
-  let tx = MARGIN;
-  for (const [label, value] of tCols) {
-    doc.setTextColor(...MUTED);
-    doc.text(label, tx, y);
-    doc.setTextColor(...INK);
-    doc.setFont(MONO, 'bold');
-    doc.text(value.substring(0, 26), tx, y + 3.8);
-    doc.setFont(MONO, 'normal');
-    tx += 46;
-  }
+  doc.text(`${str(cust.city, '')}, ${str(cust.state, '')}`.substring(0, 60), MARGIN, y);
   y += 9;
-  if (mov.notes) {
-    doc.setFont(SANS, 'normal');
-    doc.setFontSize(8);
-    doc.setTextColor(...MUTED);
-    const noteLines = doc.splitTextToSize(`Instructions / Site Remarks: ${mov.notes}`, PAGE_W - MARGIN * 2);
-    doc.text(noteLines, MARGIN, y);
-    y += noteLines.length * 4 + 2;
-  }
 
   // Items
   autoTable(doc, {
     startY: y,
     margin: { left: MARGIN, right: MARGIN },
-      head: [['#', 'Description of Goods', 'SKU', 'HSN', 'Qty', 'UOM', 'Agreed Rate', 'Total Value (Rs.)']],
+      head: [['#', 'Description of Goods', 'SKU', 'Qty', 'UOM', 'Agreed Rate', 'Total Value (Rs.)']],
     body: itemRows.map((r) => [
       String(r.sNo),
       r.description ? `${r.productName} - ${r.description}` : r.productName,
       r.sku,
-      r.hsnCode,
       String(r.quantity),
       r.unitCode,
       rs(r.indicativePrice),
       rs(r.lineTotal)
     ]),
     foot: [[
-      { content: 'Total Dispatched Quantity & Value:', colSpan: 4, styles: { halign: 'right', fontStyle: 'bold' } },
+      { content: 'Total Dispatched Quantity & Value:', colSpan: 3, styles: { halign: 'right', fontStyle: 'bold' } },
       String(input.totalQuantity),
       'Units',
       '',
@@ -490,10 +459,10 @@ export function buildChallanPdf(input: ChallanPdfInput): jsPDF {
     footStyles: { fontStyle: 'bold', textColor: INK, fillColor: WASH },
     columnStyles: {
       0: { halign: 'center', cellWidth: 8 },
-      4: { halign: 'right', fontStyle: 'bold' },
+      3: { halign: 'right', fontStyle: 'bold' },
+      4: { halign: 'right' },
       5: { halign: 'right' },
-      6: { halign: 'right' },
-      7: { halign: 'right', fontStyle: 'bold' }
+      6: { halign: 'right', fontStyle: 'bold' }
     }
   });
   y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 6;

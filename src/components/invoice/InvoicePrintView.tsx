@@ -4,6 +4,7 @@ import { formatINR } from '../../utils/calculations';
 import { buildInvoicePdf, docToBase64 } from '../../utils/pdfDocuments';
 import { Printer, X, CheckCircle, Download } from 'lucide-react';
 import { Badge } from '../common/Badge';
+import { Button, Toolbar } from '../ui';
 
 interface InvoicePrintViewProps {
   invoice: Invoice;
@@ -61,78 +62,60 @@ export const InvoicePrintView: React.FC<InvoicePrintViewProps> = ({
   return (
     <div className="space-y-6">
       {/* Control bar (hidden during print) */}
-      <div className="flex items-center justify-between p-4 bg-neutral-100 border border-neutral-300 rounded-lg no-print">
+      <Toolbar>
         <div className="flex items-center gap-3">
           <Badge variant={statusVariant[invoice.status]} size="md">
             {invoice.status}
           </Badge>
-          <span className="text-xs text-neutral-600 font-mono">
+          <span className="text-xs text-muted-foreground font-mono">
             {invoice.invoice_number} • Created: {new Date(invoice.created_at).toLocaleDateString()}
           </span>
         </div>
 
         <div className="flex items-center gap-2">
           {invoice.status === 'DRAFT' && onFinalize && (
-            <button
-              onClick={onFinalize}
-              className="px-3 py-1.5 text-xs font-semibold bg-emerald-600 text-white rounded hover:bg-emerald-700 flex items-center gap-1.5 shadow-2xs"
-            >
+            <Button variant="success" size="sm" onClick={onFinalize}>
               <CheckCircle className="w-3.5 h-3.5" />
               Finalize Invoice
-            </button>
+            </Button>
           )}
 
           {invoice.status === 'FINALIZED' && outstanding > 0 && onOpenPayment && (
-            <button
-              onClick={onOpenPayment}
-              className="px-3 py-1.5 text-xs font-semibold bg-neutral-900 text-white rounded hover:bg-neutral-800 flex items-center gap-1.5 shadow-2xs"
-            >
+            <Button variant="primary" size="sm" onClick={onOpenPayment}>
               Record Payment
-            </button>
+            </Button>
           )}
 
           {invoice.status !== 'CANCELLED' && onCancel && (
-            <button
+            <Button
+              variant="destructive-outline"
+              size="sm"
               onClick={() => {
                 const reason = prompt('Please enter cancellation reason:');
                 if (reason) onCancel(reason);
               }}
-              className="px-3 py-1.5 text-xs font-medium text-rose-700 bg-rose-50 border border-rose-200 rounded hover:bg-rose-100"
             >
               Cancel Invoice
-            </button>
+            </Button>
           )}
 
-          <button
-            onClick={handleDownloadPDF}
-            disabled={downloading}
-            aria-label="Download invoice as PDF file"
-            className="px-3.5 py-1.5 text-xs font-semibold bg-neutral-900 text-white rounded hover:bg-neutral-800 flex items-center gap-1.5 shadow-2xs disabled:opacity-60"
-          >
-            <Download className="w-4 h-4 text-white" aria-hidden="true" />
+          <Button variant="primary" size="sm" onClick={handleDownloadPDF} disabled={downloading} aria-label="Download invoice as PDF file" className="px-3.5">
+            <Download className="w-4 h-4" aria-hidden="true" />
             {downloading ? 'Preparing PDF…' : 'Download PDF'}
-          </button>
+          </Button>
 
-          <button
-            onClick={handlePrint}
-            className="px-3.5 py-1.5 text-xs font-medium bg-white text-neutral-800 border border-neutral-300 rounded hover:bg-neutral-50 flex items-center gap-1.5 shadow-2xs"
-          >
-            <Printer className="w-4 h-4 text-neutral-600" />
+          <Button variant="secondary" size="sm" onClick={handlePrint} className="px-3.5">
+            <Printer className="w-4 h-4 text-muted-foreground" />
             Print / Save PDF
-          </button>
+          </Button>
 
           {onClose && (
-            <button
-              onClick={onClose}
-              aria-label="Close invoice preview"
-              className="p-1.5 text-neutral-500 hover:text-neutral-800 rounded"
-              title="Close"
-            >
+            <Button variant="icon-ghost" size="icon" onClick={onClose} aria-label="Close invoice preview" title="Close">
               <X className="w-5 h-5" aria-hidden="true" />
-            </button>
+            </Button>
           )}
         </div>
-      </div>
+      </Toolbar>
 
       {/* Actual Printable Invoice Container */}
       <div className="print-container bg-white border border-neutral-300 p-8 rounded-lg shadow-sm text-neutral-900 font-sans max-w-4xl mx-auto space-y-6">

@@ -80,18 +80,21 @@ const VALID_SETTINGS = {
   console.log('M2-1 migration 0003 dedupe + unique index: OK');
 }
 
-// M2-2. Fresh install seeds the 9 standard UOMs (idempotent, never overwrites).
+// M2-2. Fresh install seeds the 4 standard UOMs (idempotent, never overwrites).
 {
   const dir = tempDir('acculedger-m2-seed-');
   initDatabase(dir);
   const uoms = listUoms();
-  assert.equal(uoms.length, 9, 'nine standard UOMs seeded');
+  assert.equal(uoms.length, 4, 'four standard UOMs seeded');
   assert.ok(uoms.every((u) => u.is_active === true), 'all seeded UOMs active');
   assert.ok(uoms.some((u) => u.code === 'PCS'), 'PCS present');
+  assert.ok(uoms.some((u) => u.code === 'KG'), 'KG present');
+  assert.ok(uoms.some((u) => u.code === 'BOX'), 'BOX present');
+  assert.ok(uoms.some((u) => u.code === 'GRAM'), 'GRAM present');
   closeDatabase();
 
   initDatabase(dir); // reopen: no duplicates, custom rows preserved
-  assert.equal(listUoms().length, 9, 'no duplicate seeding on reopen');
+  assert.equal(listUoms().length, 4, 'no duplicate seeding on reopen');
   closeDatabase();
   console.log('M2-2 fresh-install UOM seeding: OK');
 }
@@ -169,7 +172,6 @@ const VALID_SETTINGS = {
     description: 'test product',
     image: null,
     primary_unit_id: cartonId,
-    hsn_code: null,
     is_active: true,
     created_at: now,
     updated_at: now,

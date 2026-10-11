@@ -60,16 +60,16 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLogin }) => {
   };
 
   return (
-    <div className="flex min-h-screen w-screen items-center justify-center bg-neutral-100 p-6 font-sans text-neutral-900">
-      <div className="w-full max-w-sm bg-white border border-neutral-200 rounded-lg shadow-2xs overflow-hidden">
+    <div className="flex min-h-screen w-screen items-center justify-center bg-background p-6 font-sans text-foreground">
+      <div className="w-full max-w-sm bg-card border border-border rounded-lg shadow-sm overflow-hidden">
         {/* Brand header */}
-        <div className="flex items-center gap-3 px-6 py-5 border-b border-neutral-200 bg-neutral-50/70">
-          <div className="w-9 h-9 bg-neutral-900 text-white font-bold flex items-center justify-center rounded text-sm font-mono">
+        <div className="flex items-center gap-3 px-6 py-5 border-b border-border bg-muted/70">
+          <div className="w-9 h-9 bg-primary text-primary-foreground font-bold flex items-center justify-center rounded-md text-sm font-mono">
             ₹
           </div>
           <div>
-            <div className="text-sm font-bold text-neutral-950 tracking-wide">AccuLedger</div>
-            <div className="text-[10px] text-neutral-500 font-mono uppercase tracking-wider">
+            <div className="text-sm font-bold text-foreground tracking-wide">AccuLedger</div>
+            <div className="text-[10px] text-muted-foreground font-mono uppercase tracking-wider">
               Offline Billing Ledger
             </div>
           </div>
@@ -78,19 +78,16 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLogin }) => {
         <form onSubmit={handleSubmit} className="px-6 py-6 space-y-4">
           <div>
             <div className="flex items-center justify-between gap-2">
-              <h1 className="text-xl font-bold tracking-tight text-neutral-950">Sign in</h1>
+              <h1 className="text-xl font-bold tracking-tight text-foreground">Sign in</h1>
               <ShellBadge />
             </div>
-            <p className="text-xs text-neutral-500 font-mono mt-1">
+            <p className="text-xs text-muted-foreground font-mono mt-1">
               Enter your passcode to open the billing counter
             </p>
           </div>
 
           {error && (
-            <div
-              role="alert"
-              className="p-3 bg-rose-50 border border-rose-200 rounded text-xs text-rose-800"
-            >
+            <div role="alert" className="p-3 bg-destructive/10 border border-destructive/25 rounded-md text-xs text-destructive">
               {error}
             </div>
           )}
@@ -98,9 +95,9 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLogin }) => {
           <div className="space-y-1.5">
             <label
               htmlFor="login-passcode"
-              className="text-xs font-semibold text-neutral-800 flex items-center gap-1.5"
+              className="text-xs font-semibold text-foreground flex items-center gap-1.5"
             >
-              <Lock className="w-3.5 h-3.5 text-neutral-500" />
+              <Lock className="w-3.5 h-3.5 text-muted-foreground" />
               Passcode
             </label>
             <div className="relative">
@@ -112,18 +109,18 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLogin }) => {
                 placeholder="Enter passcode"
                 autoFocus
                 autoComplete="current-password"
-                className="w-full px-3 py-2 pr-10 text-sm bg-white border border-neutral-300 rounded text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:ring-1 focus:ring-neutral-900 font-mono"
+                className="w-full px-3 py-2 pr-10 text-sm bg-card border border-input rounded-md text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-1 focus:ring-ring font-mono"
               />
               <button
                 type="button"
                 onClick={() => setShowPasscode((v) => !v)}
                 aria-label={showPasscode ? 'Hide passcode' : 'Show passcode'}
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-neutral-400 hover:text-neutral-700 rounded"
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground rounded-md"
               >
                 {showPasscode ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
             </div>
-            <p className="text-[11px] text-neutral-500 font-mono">
+            <p className="text-[11px] text-muted-foreground font-mono">
               Initial default is 1234 — change it in Settings.
             </p>
           </div>
@@ -131,7 +128,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLogin }) => {
           <button
             type="submit"
             disabled={passcode.length === 0 || checking}
-            className="w-full py-2 px-4 bg-neutral-900 text-white rounded text-xs font-semibold hover:bg-neutral-800 transition-colors disabled:opacity-40"
+            className="w-full py-2 px-4 bg-primary text-primary-foreground rounded-md text-xs font-semibold hover:bg-primary/90 transition-colors disabled:opacity-40"
           >
             {checking ? 'Checking…' : 'Unlock App'}
           </button>

@@ -86,8 +86,7 @@ export function runAccountingTestSuite(): TestResult[] {
     productId: 'prod-1',
     unitId: 'uom-pcs',
     quantity: 9999, // Intentional overflow
-    referenceId: 'TEST-OVERFLOW',
-    notes: 'Testing return exceeding balance'
+    referenceId: 'TEST-OVERFLOW'
   });
   record(
     'test-5',

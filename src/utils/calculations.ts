@@ -321,6 +321,66 @@ export function calculateInvoiceOutstanding(
 }
 
 /**
+ * Financial year for an ISO timestamp, e.g. '2025-26'. India follows April–March,
+ * and the boundary is midnight IST — so the calendar date is read in Asia/Kolkata,
+ * never UTC (31 Mar 23:30 UTC is already 1 Apr IST, i.e. the next FY).
+ */
+export function getFyForDate(isoDate: string): string {
+  const d = new Date(isoDate);
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d);
+  const [yStr, mStr] = parts.split('-');
+  const y = Number(yStr);
+  const m = Number(mStr);
+  if (m >= 4) return `${y}-${String((y + 1) % 100).padStart(2, '0')}`;
+  return `${y - 1}-${String(y % 100).padStart(2, '0')}`;
+}
+
+/**
+ * Next free plain document number ("1", "2", … — no prefix, no FY link).
+ * Only all-digit numbers participate in the scan (legacy codes like "CH-501"
+ * stay valid but never shift the plain sequence); the stored floor keeps
+ * Settings edits meaningful; taken candidates are skipped so the result is
+ * always free. Returns '' when nothing is free within the attempt cap.
+ */
+export function suggestNextPlainNumber(
+  existingNumbers: string[],
+  floor = 1,
+  maxAttempts = 500
+): string {
+  let maxPlain = 0;
+  for (const raw of existingNumbers) {
+    const t = (raw || '').trim();
+    if (!/^\d+$/.test(t)) continue;
+    const n = Number(t);
+    if (Number.isSafeInteger(n) && n > maxPlain) maxPlain = n;
+  }
+  let candidate = Math.max(Number.isInteger(floor) && floor > 0 ? floor : 1, maxPlain + 1);
+  const taken = new Set(existingNumbers.map((s) => (s || '').trim().toUpperCase()).filter(Boolean));
+  for (let i = 0; i < maxAttempts; i++) {
+    if (!taken.has(String(candidate))) return String(candidate);
+    candidate += 1;
+  }
+  return '';
+}
+
+/**
+ * Next free plain customer number. Thin delegate — customer numbering IS plain
+ * document-style numbering scoped to the customers table.
+ */
+export function suggestCustomerNumber(
+  existingNumbers: string[],
+  floor = 1,
+  maxAttempts = 500
+): string {
+  return suggestNextPlainNumber(existingNumbers, floor, maxAttempts);
+}
+
+/**
  * Holdings-row billing state for consignment quick actions. A row is BILLED
  * only when something was actually billed and nothing billable remains — then
  * no Return is possible (billed goods can't come back as consignment returns)
@@ -331,6 +391,69 @@ export function isHoldingsRowFullyBilled(billedQuantity: number, unbilledQuantit
 }
 
 export type MovementBillingStatus = 'BILLED' | 'PARTIAL' | 'UNBILLED';
+
+/**
+ * GST state-code lookup by state name (CBIC codes 01–38). Codes 26 and 28
+ * are unassigned — no name maps to them.
+ */
+const GST_STATE_CODE_BY_STATE: Record<string, string> = {
+  'jammu and kashmir': '01',
+  'himachal pradesh': '02',
+  punjab: '03',
+  chandigarh: '04',
+  uttarakhand: '05',
+  haryana: '06',
+  delhi: '07',
+  rajasthan: '08',
+  'uttar pradesh': '09',
+  bihar: '10',
+  sikkim: '11',
+  'arunachal pradesh': '12',
+  nagaland: '13',
+  manipur: '14',
+  mizoram: '15',
+  tripura: '16',
+  meghalaya: '17',
+  assam: '18',
+  'west bengal': '19',
+  jharkhand: '20',
+  odisha: '21',
+  orissa: '21',
+  chhattisgarh: '22',
+  'madhya pradesh': '23',
+  gujarat: '24',
+  'dadra and nagar haveli and daman and diu': '25',
+  'daman and diu': '25',
+  'dadra and nagar haveli': '25',
+  maharashtra: '27',
+  karnataka: '29',
+  goa: '30',
+  lakshadweep: '31',
+  kerala: '32',
+  'tamil nadu': '33',
+  puducherry: '34',
+  pondicherry: '34',
+  'andaman and nicobar islands': '35',
+  telangana: '36',
+  'andhra pradesh': '37',
+  ladakh: '38',
+};
+
+/**
+ * Customer GST state code, derived because the customers table no longer
+ * stores one. Precedence is legally grounded, then compatible:
+ * 1. GSTIN prefix — the first 2 digits of a valid GSTIN ARE the state code.
+ * 2. State-name map above (covers unregistered customers).
+ * 3. '24' default — preserves the historical fallback used across billing.
+ */
+export function getCustomerStateCode(customer: { gst_number?: string; state?: string }): string {
+  const gst = (customer.gst_number || '').trim().toUpperCase();
+  const prefix = /^(\d{2})[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/.exec(gst)?.[1];
+  if (prefix) return prefix;
+  const mapped = GST_STATE_CODE_BY_STATE[(customer.state || '').trim().toLowerCase()];
+  if (mapped) return mapped;
+  return '24';
+}
 
 /**
  * Per-dispatch-movement billing status from allocated (non-cancelled) quantity.

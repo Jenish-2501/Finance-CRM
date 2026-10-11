@@ -39,8 +39,14 @@ Files: `src/utils/calculations.ts` (calculateLineItemFinancials, calculateInvoic
 Public functions:
 - `calculateLineItemFinancials(qty, price, discount, rate, extra, bizState, custState)` — per-line rounding
 - `calculateInvoiceTotals(items, otherCharges?) → InvoiceTotals` — running-round accumulation
-- store: create (snapshot customer/business/bank JSON + invoice_number `prefix+next_number` + allocations),
+- store: create (snapshot customer/business/bank JSON + per-FY plain invoice_number + allocations),
   finalize DRAFT→FINALIZED, cancel (blocked if active payments exist)
+Numbering (v7): `invoice_series` counters (UNIQUE fy), `invoices.fy` anchors every number, plain
+sequences restart at `invoice_start_number` (default 1, no prefix/padding); `createInvoice` accepts
+backdated `invoiceDate` (past only) and files by that date's FY with collision skip; Billing has a
+date picker + double-submit guard; Header shows live FY. Identity backstop (v8, owner-approved
+fail-fast): `UNIQUE(fy, invoice_number)` — same number across FYs legal, twice in one FY rejected
+at SQLite. Tests in `tests/fiscal-year/`.
 Dependencies: M01, M02, M09 (customer), M10 (product/price), M06 (allocations ↔ dispatch movements).
 Depended on by: M04, M05, M07, M08.
 
@@ -75,6 +81,14 @@ getBillableMovementsForCustomer), `src/views/CompanyInventoryView.tsx`,
 Public functions: dual-ledger stock (company `inventory_movements` + consignment
 `customer_inventory_movements`, Rule 55 challan fields); dispatch validates company stock; return validates
 customer holding; explicit `invoice_allocations` link movement↔invoice (no `is_billed` flags).
+Dispatch documents (v9): one shared plain sequence for challans + returns — number lives ONCE in
+`dispatch_documents` (UNIQUE per customer + type), movements carry `document_id`, creation is
+header-atomic with counter advance and per-customer+type duplicate rejection; challan print groups
+by document with legacy fallback. A row-level UNIQUE was proven unworkable (multi-row challans
+legitimately share numbers); grouping key == unique key makes the backfill inherently safe.
+Logistics capture removed (v14): vehicle/transporter/e-way/purpose/site-notes columns dropped
+from movements (other tables' notes untouched); dispatch/return forms, challan screen + PDF show
+place of supply only. Tests in `tests/dispatch-documents/`.
 No FIFO/average valuation — quantities only, no cost tracking (gap G3).
 Dependencies: M01, M09, M10. Depended on by: M03, M07.
 
@@ -99,6 +113,10 @@ Files: `src/types/database.ts` (Customer), `electron/database/schema/customers.t
 formatCustomerLabel)
 Behavior: `customer_number` TEXT NOT NULL UNIQUE (v5 migration, backfilled `C-1001…`); store validates
 required+unique (case-insensitive); delete is soft-disable when invoices/movements reference the customer.
+Auto-numbering (v8): plain global sequence from 1, no prefix, no FY link — `suggestCustomerNumber()`
+(plain-integers-only scan, floor, skip-taken) + `business_settings.customer_next_number` floor
+(Settings-editable, backend-validated); create form auto-fills (editable override fast-forwards);
+failures burn nothing. Tests in `tests/customer-numbers/`.
 Dependencies: M13, M14 (persistence). Depended on by: M03, M04, M06.
 
 ### M10 products-uom

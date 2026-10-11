@@ -4,8 +4,8 @@ import { logger } from '../utils/logger.js';
 
 // First-launch system seeding. Inserts ONLY the rows the app needs to boot
 // functionally offline: one business_settings row (numbering, GST defaults)
-// and the 9 standard units of measure (billing/inventory lookups dereference
-// them by ID). Single-owner app: no users table, no admin seeding. Demo
+// and the 4 standard units of measure (PCS, KG, BOX, GRAM —
+// billing/inventory lookups dereference them by ID). Single-owner app: no
 // transactional data (customers, products, invoices, movements) is NEVER
 // seeded here.
 // Idempotent: each table is seeded only when completely empty, so existing

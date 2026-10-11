@@ -6,6 +6,14 @@ import * as m0003 from './migrations/0003_business_config.js';
 import * as m0004 from './migrations/0004_single_owner.js';
 import * as m0005 from './migrations/0005_customer_number.js';
 import * as m0006 from './migrations/0006_customer_pricing.js';
+import * as m0007 from './migrations/0007_fy_numbering.js';
+import * as m0008 from './migrations/0008_customer_counter_and_invoice_identity.js';
+import * as m0009 from './migrations/0009_dispatch_documents.js';
+import * as m0010 from './migrations/0010_remove_hsn.js';
+import * as m0011 from './migrations/0011_remove_customer_email_state_code.js';
+import * as m0012 from './migrations/0012_remove_secondary_packaging.js';
+import * as m0013 from './migrations/0013_retire_nonstandard_units.js';
+import * as m0014 from './migrations/0014_remove_dispatch_logistics.js';
 
 interface Migration {
   version: number;
@@ -21,6 +29,14 @@ const MIGRATIONS: Migration[] = [
   { version: m0004.version, name: m0004.name, sql: m0004.sql },
   { version: m0005.version, name: m0005.name, sql: m0005.sql },
   { version: m0006.version, name: m0006.name, sql: m0006.sql },
+  { version: m0007.version, name: m0007.name, sql: m0007.sql },
+  { version: m0008.version, name: m0008.name, sql: m0008.sql },
+  { version: m0009.version, name: m0009.name, sql: m0009.sql },
+  { version: m0010.version, name: m0010.name, sql: m0010.sql },
+  { version: m0011.version, name: m0011.name, sql: m0011.sql },
+  { version: m0012.version, name: m0012.name, sql: m0012.sql },
+  { version: m0013.version, name: m0013.name, sql: m0013.sql },
+  { version: m0014.version, name: m0014.name, sql: m0014.sql },
 ];
 
 const MIGRATIONS_TABLE_SQL = `

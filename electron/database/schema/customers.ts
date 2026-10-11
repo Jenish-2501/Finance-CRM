@@ -6,14 +6,12 @@ export const customers = sqliteTable('customers', {
   customerNumber: text('customer_number').notNull(), // searchable short code, unique
   pan: text('pan').notNull(),
   gstNumber: text('gst_number').notNull(),
-  email: text('email').notNull(),
   mobile: text('mobile').notNull(),
   address: text('address').notNull(),
   city: text('city').notNull(),
   state: text('state').notNull(),
   country: text('country').notNull(),
   postalCode: text('postal_code').notNull(),
-  stateCode: text('state_code').notNull(),
   bankDetails: text('bank_details'), // JSON string | null
   creditLimit: real('credit_limit'), // nullable
   isActive: integer('is_active', { mode: 'boolean' }).notNull(),

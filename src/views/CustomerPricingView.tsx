@@ -4,7 +4,8 @@ import { CustomerPicker, firstCustomerId, formatCustomerLabel } from '../compone
 import { formatINR, roundCurrency } from '../utils/calculations';
 import { Modal } from '../components/common/Modal';
 import { Badge } from '../components/common/Badge';
-import { Tag, History, Save, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { Button, Card, CardFooter, Input, Label, PageHeader, TableShell, Table, THead, TBody, TR, TH, TD } from '../components/ui';
+import { History, Save, CheckCircle2, AlertTriangle } from 'lucide-react';
 
 export const CustomerPricingView: React.FC = () => {
   const {
@@ -106,27 +107,19 @@ export const CustomerPricingView: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 bg-white border border-neutral-200 rounded-lg shadow-2xs">
-        <div>
-          <h1 className="text-xl font-bold tracking-tight text-neutral-950 flex items-center gap-2">
-            <Tag className="w-5 h-5" /> Customer Pricing
-          </h1>
-          <p className="text-xs text-neutral-500 font-mono mt-0.5">
-            Agreed selling price per customer • base price applies when empty • applies immediately to billing &amp; challans
-          </p>
-        </div>
-        <button
-          onClick={() => setHistoryOpen(true)}
-          disabled={!customer}
-          className="px-3.5 py-1.5 text-xs font-semibold bg-white border border-neutral-300 rounded hover:bg-neutral-50 flex items-center gap-1.5 disabled:opacity-40"
-        >
-          <History className="w-3.5 h-3.5" />
-          <span>Price History{customer ? ` — ${customer.customer_number}` : ''}</span>
-        </button>
-      </div>
+      <PageHeader
+        title="Customer Pricing"
+        subtitle="Agreed selling price per customer • base price applies when empty • applies immediately to billing & challans"
+        actions={
+          <Button variant="secondary" size="sm" onClick={() => setHistoryOpen(true)} disabled={!customer}>
+            <History className="w-3.5 h-3.5" />
+            <span>Price History{customer ? ` — ${customer.customer_number}` : ''}</span>
+          </Button>
+        }
+      />
 
-      <div className="p-4 bg-white border border-neutral-200 rounded-lg shadow-2xs text-xs">
-        <label className="block font-semibold text-neutral-700 mb-1">Select Customer</label>
+      <Card className="p-4 text-xs shadow-2xs">
+        <Label className="mb-1">Select Customer</Label>
         <div className="max-w-md">
           <CustomerPicker
             value={effectiveCustomerId}
@@ -135,34 +128,34 @@ export const CustomerPricingView: React.FC = () => {
           />
         </div>
         {customer && (
-          <div className="text-[11px] font-mono text-neutral-500 mt-1">
+          <div className="text-[11px] font-mono text-muted-foreground mt-1">
             {formatCustomerLabel(customer)} • {customer.city} • GSTIN: {customer.gst_number || 'N/A'}
           </div>
         )}
-      </div>
+      </Card>
 
-      <div className="bg-white border border-neutral-200 rounded-lg shadow-2xs overflow-hidden">
-        <div className="p-4 border-b border-neutral-200 bg-neutral-50/70 text-xs font-bold uppercase tracking-wider text-neutral-800">
+      <TableShell>
+        <div className="p-4 border-b border-border bg-muted/70 text-xs font-bold uppercase tracking-wider text-foreground">
           Agreed Prices ({rows.length} product-units)
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse">
+          <Table className="text-left border-collapse">
             <caption className="sr-only">Agreed customer prices by product</caption>
-            <thead>
-              <tr className="border-b border-neutral-200 bg-neutral-50/80 font-mono text-neutral-600 text-[11px]">
-                <th scope="col" className="py-3 px-4">Product</th>
-                <th scope="col" className="py-3 px-3">Unit</th>
-                <th scope="col" className="py-3 px-3 text-right">Base Price</th>
-                <th scope="col" className="py-3 px-3 text-right">Agreed Price (₹)</th>
-                <th scope="col" className="py-3 px-3 text-right">Margin</th>
-                <th scope="col" className="py-3 px-3 text-center">Applies</th>
-                <th scope="col" className="py-3 px-4 text-right">Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-neutral-200 font-sans">
+            <THead>
+              <TR className="hover:bg-transparent">
+                <TH scope="col">Product</TH>
+                <TH scope="col">Unit</TH>
+                <TH scope="col" className="text-right">Base Price</TH>
+                <TH scope="col" className="text-right">Agreed Price (₹)</TH>
+                <TH scope="col" className="text-right">Margin</TH>
+                <TH scope="col" className="text-center">Applies</TH>
+                <TH scope="col" className="text-right px-4">Action</TH>
+              </TR>
+            </THead>
+            <TBody>
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-8 text-center text-neutral-400">
+                  <td colSpan={7} className="py-8 text-center text-muted-foreground">
                     No active products with billing units.
                   </td>
                 </tr>
@@ -174,15 +167,15 @@ export const CustomerPricingView: React.FC = () => {
                   const marginPct = margin !== null && row.basePrice > 0 ? roundCurrency((margin / row.basePrice) * 100) : null;
                   const msg = rowMsg[row.key];
                   return (
-                    <tr key={row.key} className="hover:bg-neutral-50/70">
-                      <td className="py-3 px-4">
-                        <div className="font-semibold text-neutral-900">{row.productName}</div>
-                        <div className="text-[11px] font-mono text-neutral-400">{row.sku}</div>
-                      </td>
-                      <td className="py-3 px-3 font-mono">{row.unitCode}</td>
-                      <td className="py-3 px-3 text-right font-mono">{formatINR(row.basePrice)}</td>
-                      <td className="py-3 px-3">
-                        <input
+                    <TR key={row.key}>
+                      <TD>
+                        <div className="font-semibold">{row.productName}</div>
+                        <div className="text-[11px] font-mono text-muted-foreground">{row.sku}</div>
+                      </TD>
+                      <TD className="font-mono">{row.unitCode}</TD>
+                      <TD className="text-right font-mono">{formatINR(row.basePrice)}</TD>
+                      <TD>
+                        <Input
                           type="number"
                           min="0"
                           step="0.01"
@@ -195,50 +188,47 @@ export const CustomerPricingView: React.FC = () => {
                             }
                           }}
                           placeholder={row.basePrice ? String(row.basePrice) : 'Base'}
-                          className="w-28 p-1.5 border border-neutral-300 rounded font-mono text-right ml-auto block"
+                          className="w-28 font-mono text-right ml-auto block"
                         />
                         {msg && (
-                          <div className={`text-[10px] mt-1 text-right flex items-center justify-end gap-1 ${msg.kind === 'success' ? 'text-emerald-700' : 'text-rose-700'}`}>
+                          <div className={`text-[10px] mt-1 text-right flex items-center justify-end gap-1 ${msg.kind === 'success' ? 'text-emerald-700 dark:text-emerald-300' : 'text-destructive'}`}>
                             {msg.kind === 'success' ? <CheckCircle2 className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}
                             <span>{msg.text}</span>
                           </div>
                         )}
-                      </td>
-                      <td className="py-3 px-3 text-right font-mono text-[11px]">
+                      </TD>
+                      <TD className="text-right font-mono text-[11px]">
                         {margin === null ? (
-                          <span className="text-neutral-400">—</span>
+                          <span className="text-muted-foreground">—</span>
                         ) : (
-                          <span className={margin < 0 ? 'text-rose-700 font-bold' : 'text-emerald-800'}>
+                          <span className={margin < 0 ? 'text-destructive font-bold' : 'text-emerald-800 dark:text-emerald-300'}>
                             {margin >= 0 ? '+' : ''}{formatINR(margin, false)}
                             {marginPct !== null ? ` (${marginPct >= 0 ? '+' : ''}${marginPct}%)` : ''}
                           </span>
                         )}
-                      </td>
-                      <td className="py-3 px-3 text-center">
+                      </TD>
+                      <TD className="text-center">
                         <Badge variant={row.agreedPrice !== null ? 'info' : 'neutral'}>
                           {row.agreedPrice !== null ? 'CUSTOM' : 'BASE'}
                         </Badge>
-                      </td>
-                      <td className="py-3 px-4 text-right">
-                        <button
-                          onClick={() => handleSave(row)}
-                          className="px-2.5 py-1 text-[11px] font-semibold bg-neutral-900 text-white rounded hover:bg-neutral-800 inline-flex items-center gap-1"
-                        >
+                      </TD>
+                      <TD className="text-right">
+                        <Button variant="primary" size="sm" onClick={() => handleSave(row)} className="text-[11px] px-2.5 py-1">
                           <Save className="w-3 h-3" />
                           <span>Save</span>
-                        </button>
-                      </td>
-                    </tr>
+                        </Button>
+                      </TD>
+                    </TR>
                   );
                 })
               )}
-            </tbody>
-          </table>
+            </TBody>
+          </Table>
         </div>
-        <div className="px-4 py-2.5 border-t border-neutral-200 bg-neutral-50/60 text-[11px] text-neutral-500">
+        <CardFooter className="text-[11px] text-muted-foreground">
           Empty agreed price = base price applies. Clearing a saved price removes the override (logged in history).
-        </div>
-      </div>
+        </CardFooter>
+      </TableShell>
 
       <Modal
         isOpen={historyOpen}
@@ -248,34 +238,34 @@ export const CustomerPricingView: React.FC = () => {
         maxWidth="2xl"
       >
         {history.length === 0 ? (
-          <p className="text-xs text-neutral-500">No price changes recorded for this customer yet.</p>
+          <p className="text-xs text-muted-foreground">No price changes recorded for this customer yet.</p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr className="border-b border-neutral-200 bg-neutral-50 font-mono text-neutral-600 text-[11px]">
-                  <th className="py-2 px-3">Changed At</th>
-                  <th className="py-2 px-3">Product</th>
-                  <th className="py-2 px-3">Unit</th>
-                  <th className="py-2 px-3 text-right">Old Price</th>
-                  <th className="py-2 px-3 text-right">New Price</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-neutral-200">
+            <Table className="text-left border-collapse">
+              <THead>
+                <TR className="hover:bg-transparent">
+                  <TH>Changed At</TH>
+                  <TH>Product</TH>
+                  <TH>Unit</TH>
+                  <TH className="text-right">Old Price</TH>
+                  <TH className="text-right">New Price</TH>
+                </TR>
+              </THead>
+              <TBody>
                 {history.map((h) => {
                   const prod = products[h.product_id];
                   return (
-                    <tr key={h.id}>
-                      <td className="py-2 px-3 font-mono text-[11px]">{new Date(h.changed_at).toLocaleString()}</td>
-                      <td className="py-2 px-3">{prod?.product_name || h.product_id}</td>
-                      <td className="py-2 px-3 font-mono">{uoms[h.unit_id]?.code || h.unit_id}</td>
-                      <td className="py-2 px-3 text-right font-mono">{h.old_price === null ? <span className="text-neutral-400">— first —</span> : formatINR(h.old_price)}</td>
-                      <td className="py-2 px-3 text-right font-mono">{h.new_price === null ? <span className="text-neutral-400">— removed —</span> : formatINR(h.new_price)}</td>
-                    </tr>
+                    <TR key={h.id}>
+                      <TD className="font-mono text-[11px]">{new Date(h.changed_at).toLocaleString()}</TD>
+                      <TD>{prod?.product_name || h.product_id}</TD>
+                      <TD className="font-mono">{uoms[h.unit_id]?.code || h.unit_id}</TD>
+                      <TD className="text-right font-mono">{h.old_price === null ? <span className="text-muted-foreground">— first —</span> : formatINR(h.old_price)}</TD>
+                      <TD className="text-right font-mono">{h.new_price === null ? <span className="text-muted-foreground">— removed —</span> : formatINR(h.new_price)}</TD>
+                    </TR>
                   );
                 })}
-              </tbody>
-            </table>
+              </TBody>
+            </Table>
           </div>
         )}
       </Modal>

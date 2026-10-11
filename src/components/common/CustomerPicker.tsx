@@ -80,7 +80,7 @@ export const CustomerPicker: React.FC<CustomerPickerProps> = ({
   return (
     <div className="relative">
       <div className="relative">
-        <Search className="w-3.5 h-3.5 text-neutral-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+        <Search className="w-3.5 h-3.5 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
         <input
           ref={inputRef}
           type="text"
@@ -109,16 +109,16 @@ export const CustomerPicker: React.FC<CustomerPickerProps> = ({
               if (filtered.length > 0) pick(filtered[0].id);
             }
           }}
-          className="w-full pl-8 pr-3 py-2 text-xs border border-neutral-300 rounded bg-white text-neutral-900 font-medium focus:ring-1 focus:ring-neutral-900 focus:outline-none disabled:opacity-50"
+          className="w-full pl-8 pr-3 py-2 text-xs border border-input rounded bg-card text-foreground font-medium focus:ring-1 focus:ring-ring focus:outline-none disabled:opacity-50"
         />
       </div>
       {open && !disabled && (
-        <div className="absolute z-20 mt-1 w-full bg-white border border-neutral-300 rounded shadow-lg max-h-56 overflow-y-auto text-xs">
+        <div className="absolute z-20 mt-1 w-full bg-card border border-input rounded shadow-lg max-h-56 overflow-y-auto text-xs">
           {filtered.length === 0 ? (
-            <div className="px-3 py-3 text-neutral-400">No customers match “{query}”.</div>
+            <div className="px-3 py-3 text-muted-foreground">No customers match “{query}”.</div>
           ) : (
             <>
-              <div className="px-3 py-1.5 text-[10px] font-mono uppercase tracking-wider text-neutral-400 border-b border-neutral-100">
+              <div className="px-3 py-1.5 text-[10px] font-mono uppercase tracking-wider text-muted-foreground border-b border-border">
                 {filtered.length} match{filtered.length === 1 ? '' : 'es'}
               </div>
               {filtered.map((c) => (
@@ -129,20 +129,20 @@ export const CustomerPicker: React.FC<CustomerPickerProps> = ({
                     e.preventDefault();
                     pick(c.id);
                   }}
-                  className={`w-full text-left px-3 py-2 hover:bg-neutral-50 flex items-center justify-between gap-2 border-b border-neutral-100 last:border-0 ${
-                    c.id === value ? 'bg-neutral-50' : ''
+                  className={`w-full text-left px-3 py-2 hover:bg-muted flex items-center justify-between gap-2 border-b border-border last:border-0 ${
+                    c.id === value ? 'bg-muted' : ''
                   }`}
                 >
                   <span>
-                    <span className="font-mono font-bold text-neutral-900">{c.customer_number || '—'}</span>
-                    <span className="text-neutral-400 font-mono"> • </span>
-                    <span className="font-medium text-neutral-800">{c.customer_name}</span>
-                    <span className="block text-[11px] text-neutral-500 font-mono">
+                    <span className="font-mono font-bold text-foreground">{c.customer_number || '—'}</span>
+                    <span className="text-muted-foreground font-mono"> • </span>
+                    <span className="font-medium text-foreground">{c.customer_name}</span>
+                    <span className="block text-[11px] text-muted-foreground font-mono">
                       {c.city}{c.gst_number ? ` • ${c.gst_number}` : ''}
                     </span>
                   </span>
                   {c.id === value && (
-                    <span className="text-[10px] font-mono px-1.5 py-0.5 bg-neutral-900 text-white rounded shrink-0">
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 bg-primary text-primary-foreground rounded shrink-0">
                       SELECTED
                     </span>
                   )}

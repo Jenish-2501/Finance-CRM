@@ -47,11 +47,7 @@ export const customerInventoryMovements = sqliteTable('customer_inventory_moveme
   movementDate: text('movement_date').notNull(),
   referenceType: text('reference_type').notNull(),
   referenceId: text('reference_id').notNull(),
-  notes: text('notes').notNull(),
-  vehicleNumber: text('vehicle_number'),
-  transporterName: text('transporter_name'),
-  ewayBillNumber: text('eway_bill_number'),
-  dispatchPurpose: text('dispatch_purpose'),
+  documentId: text('document_id'), // FK → dispatch_documents.id (backfilled by v9)
   createdAt: text('created_at').notNull(),
   createdBy: text('created_by').notNull(),
 });
@@ -59,3 +55,16 @@ export const customerInventoryMovements = sqliteTable('customer_inventory_moveme
 export type StockReceiptRow = typeof stockReceipts.$inferSelect;
 export type InventoryMovementRow = typeof inventoryMovements.$inferSelect;
 export type CustomerInventoryMovementRow = typeof customerInventoryMovements.$inferSelect;
+
+// One row per dispatch challan / return slip. The document number lives ONCE
+// here (UNIQUE per customer + type) instead of free text on every movement row.
+export const dispatchDocuments = sqliteTable('dispatch_documents', {
+  id: text('id').primaryKey(),
+  documentNumber: text('document_number').notNull(),
+  customerId: text('customer_id').notNull(),
+  documentType: text('document_type').notNull(), // DISPATCH | RETURN
+  documentDate: text('document_date').notNull(),
+  createdAt: text('created_at').notNull(),
+});
+
+export type DispatchDocumentRow = typeof dispatchDocuments.$inferSelect;

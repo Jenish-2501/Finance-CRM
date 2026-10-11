@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { Modal } from '../components/common/Modal';
 import { Badge } from '../components/common/Badge';
+import { Button, Card, CardHeader, PageHeader, SearchInput, TableShell, Table, THead, TBody, TR, TH, TD, Tabs, Input, Label, Select, Alert } from '../components/ui';
 import { DeliveryChallanPrintView } from '../components/challan/DeliveryChallanPrintView';
 
 export const CompanyInventoryView: React.FC = () => {
@@ -136,172 +137,116 @@ export const CompanyInventoryView: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Header & Controls */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 bg-white border border-neutral-200 rounded-lg shadow-2xs">
-        <div>
-          <h1 className="text-xl font-bold tracking-tight text-neutral-950">Company Stock &amp; Warehouse Ledger</h1>
-          <p className="text-xs text-neutral-500 font-mono mt-0.5">
-            Strict ledger-based inventory • Current stock calculated as Σ(Inward - Outward)
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setIsAdjustModalOpen(true)}
-            className="px-3 py-1.5 text-xs font-medium text-neutral-700 bg-white border border-neutral-300 rounded hover:bg-neutral-50 flex items-center gap-1.5"
-          >
-            <SlidersHorizontal className="w-3.5 h-3.5 text-neutral-500" />
-            <span>Audit Adjustment</span>
-          </button>
-
-          <button
-            onClick={handleOpenReceipt}
-            className="px-3.5 py-1.5 text-xs font-semibold bg-neutral-900 text-white rounded hover:bg-neutral-800 transition-colors flex items-center gap-1.5 shadow-2xs"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>Receive Inward Stock</span>
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        title="Company Stock & Warehouse Ledger"
+        subtitle="Strict ledger-based inventory • Current stock calculated as Σ(Inward - Outward)"
+        actions={
+          <>
+            <Button variant="secondary" size="sm" onClick={() => setIsAdjustModalOpen(true)}>
+              <SlidersHorizontal className="w-3.5 h-3.5 text-muted-foreground" />
+              <span>Audit Adjustment</span>
+            </Button>
+            <Button variant="primary" size="md" onClick={handleOpenReceipt}>
+              <Plus className="w-3.5 h-3.5" />
+              <span>Receive Inward Stock</span>
+            </Button>
+          </>
+        }
+      />
 
       {/* Tabs */}
-      <div
-        role="tablist"
-        aria-label="Company inventory views"
-        onKeyDown={(e) => {
-          if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(e.key)) return;
-          e.preventDefault();
-          const tabs = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]'));
-          const current = tabs.indexOf(document.activeElement as HTMLElement);
-          const nextIndex =
-            e.key === 'ArrowRight' ? (current + 1) % tabs.length
-            : e.key === 'ArrowLeft' ? (current - 1 + tabs.length) % tabs.length
-            : e.key === 'Home' ? 0 : tabs.length - 1;
-          tabs[nextIndex]?.focus();
-          tabs[nextIndex]?.click();
-        }}
-        className="flex border-b border-neutral-200 gap-6 text-xs font-medium text-neutral-500"
-      >
-        <button
-          role="tab"
-          aria-selected={activeTab === 'balances'}
-          onClick={() => setActiveTab('balances')}
-          className={`pb-2.5 transition-colors border-b-2 -mb-px ${
-            activeTab === 'balances'
-              ? 'border-neutral-900 text-neutral-900 font-semibold'
-              : 'border-transparent hover:text-neutral-800'
-          }`}
-        >
-          Warehouse Stock Balances ({allProducts.length})
-        </button>
-        <button
-          role="tab"
-          aria-selected={activeTab === 'movements'}
-          onClick={() => setActiveTab('movements')}
-          className={`pb-2.5 transition-colors border-b-2 -mb-px ${
-            activeTab === 'movements'
-              ? 'border-neutral-900 text-neutral-900 font-semibold'
-              : 'border-transparent hover:text-neutral-800'
-          }`}
-        >
-          Movement Ledger ({movementsList.length})
-        </button>
-        <button
-          role="tab"
-          aria-selected={activeTab === 'receipts'}
-          onClick={() => setActiveTab('receipts')}
-          className={`pb-2.5 transition-colors border-b-2 -mb-px ${
-            activeTab === 'receipts'
-              ? 'border-neutral-900 text-neutral-900 font-semibold'
-              : 'border-transparent hover:text-neutral-800'
-          }`}
-        >
-          Stock Receipts ({Object.keys(stockReceipts).length})
-        </button>
-      </div>
+      <Tabs
+        ariaLabel="Company inventory views"
+        activeId={activeTab}
+        onSelect={(id) => setActiveTab(id as 'balances' | 'movements' | 'receipts')}
+        tabs={[
+          { id: 'balances', label: 'Warehouse Stock Balances', count: allProducts.length },
+          { id: 'movements', label: 'Movement Ledger', count: movementsList.length },
+          { id: 'receipts', label: 'Stock Receipts', count: Object.keys(stockReceipts).length },
+        ]}
+      />
 
       {/* Tab 1: Current Stock Balances */}
       {activeTab === 'balances' && (
-        <div className="bg-white border border-neutral-200 rounded-lg shadow-2xs overflow-hidden">
-          <div className="p-3 border-b border-neutral-200 bg-neutral-50/50 flex justify-between items-center">
-            <div className="relative">
-              <Search className="w-3.5 h-3.5 text-neutral-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                placeholder="Filter items..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-8 pr-3 py-1 text-xs border border-neutral-300 rounded focus:ring-1 focus:ring-neutral-900 focus:outline-none w-56 bg-white"
-              />
-            </div>
-            <span className="text-[11px] font-mono text-neutral-500">
+        <TableShell>
+          <CardHeader>
+            <SearchInput
+              icon={<Search className="w-3.5 h-3.5" />}
+              type="text"
+              placeholder="Filter items..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-56"
+            />
+            <span className="text-[11px] font-mono text-muted-foreground">
               Rule 13: Calculated purely from movements (No stored current_stock field)
             </span>
-          </div>
+          </CardHeader>
 
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
+            <Table className="text-left border-collapse">
             <caption className="sr-only">Warehouse stock balances by product</caption>
-            <thead>
-              <tr className="border-b border-neutral-200 bg-neutral-50/80 font-mono text-neutral-600 text-[11px]">
-                <th scope="col" className="py-3 px-4">Product Name</th>
-                  <th scope="col" className="py-3 px-3">SKU</th>
-                  <th scope="col" className="py-3 px-3">Base UOM</th>
-                  <th scope="col" className="py-3 px-3 text-right">Available Warehouse Stock</th>
-                  <th scope="col" className="py-3 px-3 text-center">Stock Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-neutral-200 font-sans">
+            <THead>
+              <TR className="hover:bg-transparent">
+                <TH scope="col">Product Name</TH>
+                  <TH scope="col">SKU</TH>
+                  <TH scope="col">Base UOM</TH>
+                  <TH scope="col" className="text-right">Available Warehouse Stock</TH>
+                  <TH scope="col" className="text-center">Stock Status</TH>
+              </TR>
+            </THead>
+            <TBody>
                 {filteredProducts.map((prod) => {
                   const stock = getCurrentCompanyStock(prod.id);
                   const uom = uoms[prod.primary_unit_id];
                   const isLow = stock < 50;
 
                   return (
-                    <tr key={prod.id} className="hover:bg-neutral-50/70">
-                      <td className="py-3 px-4 font-semibold text-neutral-900">
+                    <TR key={prod.id}>
+                      <TD className="font-semibold">
                         {prod.product_name}
-                      </td>
-                      <td className="py-3 px-3 font-mono text-neutral-600 text-[11px]">{prod.sku}</td>
-                      <td className="py-3 px-3 font-mono">
+                      </TD>
+                      <TD className="font-mono text-muted-foreground text-[11px]">{prod.sku}</TD>
+                      <TD className="font-mono">
                         <Badge variant="neutral">{uom?.code || 'PCS'}</Badge>
-                      </td>
-                      <td className="py-3 px-3 text-right font-mono font-bold text-sm">
-                        <span className={stock > 0 ? 'text-neutral-950' : 'text-rose-600'}>
+                      </TD>
+                      <TD className="text-right font-mono font-bold text-sm">
+                        <span className={stock > 0 ? 'text-foreground' : 'text-destructive'}>
                           {stock.toLocaleString()}
                         </span>{' '}
-                        <span className="text-xs font-normal text-neutral-500">{uom?.code}</span>
-                      </td>
-                      <td className="py-3 px-3 text-center">
+                        <span className="text-xs font-normal text-muted-foreground">{uom?.code}</span>
+                      </TD>
+                      <TD className="text-center">
                         <Badge variant={stock > 0 ? (isLow ? 'warning' : 'success') : 'danger'}>
                           {stock > 0 ? (isLow ? 'LOW STOCK' : 'IN STOCK') : 'DEPLETED'}
                         </Badge>
-                      </td>
-                    </tr>
+                      </TD>
+                    </TR>
                   );
                 })}
-              </tbody>
-            </table>
+              </TBody>
+            </Table>
           </div>
-        </div>
+        </TableShell>
       )}
 
       {/* Tab 2: Movement Ledger */}
       {activeTab === 'movements' && (
-        <div className="bg-white border border-neutral-200 rounded-lg shadow-2xs overflow-hidden">
+        <TableShell>
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
+            <Table className="text-left border-collapse">
               <caption className="sr-only">Company inventory movement ledger</caption>
-              <thead>
-                <tr className="border-b border-neutral-200 bg-neutral-50/80 font-mono text-neutral-600 text-[11px]">
-                  <th scope="col" className="py-3 px-4">Date</th>
-                  <th scope="col" className="py-3 px-3">Product</th>
-                  <th scope="col" className="py-3 px-3">Movement Type</th>
-                  <th scope="col" className="py-3 px-3 text-right">Quantity</th>
-                  <th scope="col" className="py-3 px-3">Reference / Notes</th>
-                  <th scope="col" className="py-3 px-4 font-mono text-[11px]">Audit By</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-neutral-200 font-sans">
+              <THead>
+                <TR className="hover:bg-transparent">
+                  <TH scope="col">Date</TH>
+                  <TH scope="col">Product</TH>
+                  <TH scope="col">Movement Type</TH>
+                  <TH scope="col" className="text-right">Quantity</TH>
+                  <TH scope="col">Reference / Notes</TH>
+                  <TH scope="col">Audit By</TH>
+                </TR>
+              </THead>
+              <TBody>
                 {movementsList.map((mov) => {
                   const prod = products[mov.product_id];
                   const uom = uoms[mov.unit_id];
@@ -311,83 +256,85 @@ export const CompanyInventoryView: React.FC = () => {
                     mov.movement_type === 'ADJUSTMENT_IN';
 
                   return (
-                    <tr key={mov.id} className="hover:bg-neutral-50/70 font-mono text-[11px]">
-                      <td className="py-3 px-4 text-neutral-500">
+                    <TR key={mov.id} className="font-mono text-[11px]">
+                      <TD className="text-muted-foreground">
                         {new Date(mov.movement_date).toLocaleDateString()}
-                      </td>
+                      </TD>
 
-                      <td className="py-3 px-3 font-sans font-semibold text-neutral-900">
+                      <TD className="font-sans font-semibold">
                         {prod?.product_name || 'Item'}
-                        <div className="text-[10px] font-mono text-neutral-400">{prod?.sku}</div>
-                      </td>
+                        <div className="text-[10px] font-mono text-muted-foreground">{prod?.sku}</div>
+                      </TD>
 
-                      <td className="py-3 px-3">
+                      <TD>
                         <Badge variant={getMovementBadgeVariant(mov.movement_type)}>
                           {mov.movement_type.replace('_', ' ')}
                         </Badge>
-                      </td>
+                      </TD>
 
-                      <td className="py-3 px-3 text-right font-bold">
-                        <span className={isPositive ? 'text-emerald-700' : 'text-neutral-900'}>
+                      <TD className="text-right font-bold">
+                        <span className={isPositive ? 'text-emerald-700 dark:text-emerald-300' : 'text-foreground'}>
                           {isPositive ? '+' : '-'}
                           {mov.quantity}
                         </span>{' '}
-                        <span className="text-[10px] text-neutral-500 font-normal">{uom?.code}</span>
-                      </td>
+                        <span className="text-[10px] text-muted-foreground font-normal">{uom?.code}</span>
+                      </TD>
 
-                      <td className="py-3 px-3 font-sans text-neutral-600">
+                      <TD className="font-sans text-muted-foreground">
                         <div>{mov.notes}</div>
                         <div className="flex items-center gap-2 mt-0.5">
-                          <span className="text-[10px] font-mono text-neutral-400">Ref: #{mov.reference_id}</span>
+                          <span className="text-[10px] font-mono text-muted-foreground">Ref: #{mov.reference_id}</span>
                           {mov.movement_type === 'CUSTOMER_DISPATCH' && (
-                            <button
+                            <Button
+                              variant="primary"
+                              size="sm"
                               onClick={() => {
                                 const cim = customerInventoryMovements[mov.reference_id];
                                 setSelectedChallanRef(cim?.reference_id || mov.reference_id);
                               }}
-                              className="px-2 py-0.5 text-[10px] font-semibold bg-neutral-900 text-white rounded hover:bg-neutral-800 inline-flex items-center gap-1 shadow-2xs cursor-pointer"
                               title="Print / View Delivery Challan"
+                              className="px-2 py-0.5 text-[10px] shadow-2xs"
                             >
                               <Printer className="w-3 h-3" />
                               <span>Challan</span>
-                            </button>
+                            </Button>
                           )}
                         </div>
-                      </td>
+                      </TD>
 
-                      <td className="py-3 px-4 text-neutral-500">{mov.created_by}</td>
-                    </tr>
+                      <TD className="text-muted-foreground">{mov.created_by}</TD>
+                    </TR>
                   );
                 })}
-              </tbody>
-            </table>
+              </TBody>
+            </Table>
           </div>
-        </div>
+        </TableShell>
       )}
 
       {/* Tab 3: Stock Receipts */}
       {activeTab === 'receipts' && (
-        <div className="bg-white border border-neutral-200 rounded-lg shadow-2xs overflow-hidden">
-          <div className="divide-y divide-neutral-200 text-xs">
+        <Card className="overflow-hidden shadow-2xs">
+          <div className="divide-y divide-border text-xs">
             {Object.values(stockReceipts).map((sr) => (
-              <div key={sr.id} className="p-4 hover:bg-neutral-50 flex items-center justify-between">
+              <div key={sr.id} className="p-4 hover:bg-muted flex items-center justify-between">
                 <div>
                   <div className="flex items-center gap-2 font-mono">
-                    <span className="font-bold text-neutral-950 text-sm">{sr.receipt_number}</span>
+                    <span className="font-bold text-foreground text-sm">{sr.receipt_number}</span>
                     <Badge variant="success">{sr.status}</Badge>
-                    <span className="text-neutral-500">Ref: {sr.reference_number || 'N/A'}</span>
+                    <span className="text-muted-foreground">Ref: {sr.reference_number || 'N/A'}</span>
                   </div>
-                  <div className="text-neutral-700 font-medium mt-1">Supplier: {sr.supplier_name}</div>
-                  <div className="text-neutral-500 text-[11px] mt-0.5">{sr.notes}</div>
+                  <div className="text-foreground font-medium mt-1">Supplier: {sr.supplier_name}</div>
+                  <div className="text-muted-foreground text-[11px] mt-0.5">{sr.notes}</div>
                 </div>
 
-                <div className="text-right font-mono text-neutral-500">
+                <div className="text-right font-mono text-muted-foreground">
                   {new Date(sr.receipt_date).toLocaleDateString()}
                 </div>
               </div>
             ))}
           </div>
-        </div>
+        </Card>
       )}
 
       {/* Receive Inward Stock Modal */}
@@ -401,74 +348,70 @@ export const CompanyInventoryView: React.FC = () => {
         <form onSubmit={handleSaveReceipt} className="space-y-4 text-xs">
           <div className="grid grid-cols-3 gap-3">
             <div className="col-span-2">
-              <label className="block font-semibold text-neutral-700 mb-1">Supplier / Vendor Name *</label>
-              <input
+              <Label className="mb-1">Supplier / Vendor Name *</Label>
+              <Input
                 type="text"
                 required
                 value={receiptSupplier}
                 onChange={(e) => setReceiptSupplier(e.target.value)}
-                className="w-full p-2 border border-neutral-300 rounded"
+                className="w-full"
                 placeholder="e.g. Gujarat Steel & Alloys Corporation"
               />
             </div>
 
             <div>
-              <label className="block font-semibold text-neutral-700 mb-1">Receipt Date</label>
-              <input
+              <Label className="mb-1">Receipt Date</Label>
+              <Input
                 type="date"
                 required
                 value={receiptDate}
                 onChange={(e) => setReceiptDate(e.target.value)}
-                className="w-full p-2 border border-neutral-300 rounded font-mono"
+                className="w-full font-mono"
               />
             </div>
 
             <div>
-              <label className="block font-semibold text-neutral-700 mb-1">PO / Delivery Challan Ref</label>
-              <input
+              <Label className="mb-1">PO / Delivery Challan Ref</Label>
+              <Input
                 type="text"
                 value={receiptRef}
                 onChange={(e) => setReceiptRef(e.target.value)}
-                className="w-full p-2 border border-neutral-300 rounded font-mono"
+                className="w-full font-mono"
               />
             </div>
 
             <div className="col-span-2">
-              <label className="block font-semibold text-neutral-700 mb-1">Notes / Remarks</label>
-              <input
+              <Label className="mb-1">Notes / Remarks</Label>
+              <Input
                 type="text"
                 value={receiptNotes}
                 onChange={(e) => setReceiptNotes(e.target.value)}
-                className="w-full p-2 border border-neutral-300 rounded"
+                className="w-full"
                 placeholder="Consignment inspection comments"
               />
             </div>
           </div>
 
           {/* Items */}
-          <div className="border-t border-neutral-200 pt-3">
+          <div className="border-t border-border pt-3">
             <div className="flex justify-between items-center mb-2">
-              <span className="font-semibold text-neutral-800 uppercase tracking-wide text-[11px]">
+              <span className="font-semibold text-foreground uppercase tracking-wide text-[11px]">
                 Inward Stock Items
               </span>
-              <button
-                type="button"
-                onClick={handleAddReceiptItem}
-                className="px-2 py-1 text-[11px] font-semibold bg-neutral-100 hover:bg-neutral-200 border border-neutral-300 rounded"
-              >
+              <Button type="button" variant="secondary" size="sm" onClick={handleAddReceiptItem} className="text-[11px] px-2 py-1">
                 + Add Another Item
-              </button>
+              </Button>
             </div>
 
             <div className="space-y-2">
               {receiptItems.map((item, idx) => (
                 <div
                   key={idx}
-                  className="grid grid-cols-12 gap-2 items-center p-2.5 bg-neutral-50 border border-neutral-200 rounded"
+                  className="grid grid-cols-12 gap-2 items-center p-2.5 bg-muted border border-border rounded-md"
                 >
                   <div className="col-span-5">
-                    <label className="block text-[10px] text-neutral-500 mb-0.5">Product</label>
-                    <select
+                    <label className="block text-[10px] text-muted-foreground mb-0.5">Product</label>
+                    <Select
                       value={item.productId}
                       onChange={(e) => {
                         const updated = [...receiptItems];
@@ -477,19 +420,19 @@ export const CompanyInventoryView: React.FC = () => {
                         if (p) updated[idx].unitId = p.primary_unit_id;
                         setReceiptItems(updated);
                       }}
-                      className="w-full p-1.5 border border-neutral-300 rounded bg-white text-xs"
+                      className="w-full text-xs"
                     >
                       {allProducts.map((p) => (
                         <option key={p.id} value={p.id}>
                           {p.product_name} ({p.sku})
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   </div>
 
                   <div className="col-span-3">
-                    <label className="block text-[10px] text-neutral-500 mb-0.5">Quantity</label>
-                    <input
+                    <label className="block text-[10px] text-muted-foreground mb-0.5">Quantity</label>
+                    <Input
                       type="number"
                       min="1"
                       required
@@ -499,13 +442,13 @@ export const CompanyInventoryView: React.FC = () => {
                         updated[idx].quantity = Number(e.target.value);
                         setReceiptItems(updated);
                       }}
-                      className="w-full p-1.5 border border-neutral-300 rounded font-mono"
+                      className="w-full font-mono"
                     />
                   </div>
 
                   <div className="col-span-3">
-                    <label className="block text-[10px] text-neutral-500 mb-0.5">Unit Cost (₹)</label>
-                    <input
+                    <label className="block text-[10px] text-muted-foreground mb-0.5">Unit Cost (₹)</label>
+                    <Input
                       type="number"
                       step="0.01"
                       value={item.unitCost}
@@ -514,20 +457,21 @@ export const CompanyInventoryView: React.FC = () => {
                         updated[idx].unitCost = Number(e.target.value);
                         setReceiptItems(updated);
                       }}
-                      className="w-full p-1.5 border border-neutral-300 rounded font-mono"
+                      className="w-full font-mono"
                     />
                   </div>
 
                   <div className="col-span-1 pt-4 text-center">
                     {receiptItems.length > 1 && (
-                      <button
+                      <Button
                         type="button"
+                        variant="ghost"
+                        size="sm"
                         onClick={() => handleRemoveReceiptItem(idx)}
-                        className="text-neutral-400 hover:text-rose-600 font-bold"
                         title="Remove line"
                       >
                         ×
-                      </button>
+                      </Button>
                     )}
                   </div>
                 </div>
@@ -535,20 +479,13 @@ export const CompanyInventoryView: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex justify-end gap-2 pt-3 border-t border-neutral-200">
-            <button
-              type="button"
-              onClick={() => setIsReceiptModalOpen(false)}
-              className="px-3.5 py-1.5 text-neutral-700 border border-neutral-300 rounded hover:bg-neutral-50"
-            >
+          <div className="flex justify-end gap-2 pt-3 border-t border-border">
+            <Button type="button" variant="secondary" size="sm" onClick={() => setIsReceiptModalOpen(false)}>
               Cancel
-            </button>
-            <button
-              type="submit"
-              className="px-4 py-1.5 font-semibold bg-neutral-900 text-white rounded hover:bg-neutral-800"
-            >
+            </Button>
+            <Button type="submit" variant="primary" size="sm">
               Confirm Receipt
-            </button>
+            </Button>
           </div>
         </form>
       </Modal>
@@ -563,34 +500,34 @@ export const CompanyInventoryView: React.FC = () => {
       >
         <form onSubmit={handleSaveAdjust} className="space-y-4 text-xs">
           {adjustError && (
-            <div className="p-2.5 bg-rose-50 border border-rose-200 text-rose-800 rounded">
+            <Alert tone="destructive">
               {adjustError}
-            </div>
+            </Alert>
           )}
 
           <div>
-            <label className="block font-semibold text-neutral-700 mb-1">Product</label>
-            <select
+            <Label className="mb-1">Product</Label>
+            <Select
               value={adjustProductId}
               onChange={(e) => setAdjustProductId(e.target.value)}
-              className="w-full p-2 border border-neutral-300 rounded bg-white text-xs"
+              className="w-full text-xs"
             >
               {allProducts.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.product_name} (Current: {getCurrentCompanyStock(p.id)})
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
 
           <div>
-            <label className="block font-semibold text-neutral-700 mb-1">Adjustment Direction</label>
+            <Label className="mb-1">Adjustment Direction</Label>
             <div className="grid grid-cols-2 gap-2">
               <label
                 className={`p-2 border rounded text-center cursor-pointer ${
                   adjustType === 'ADJUSTMENT_IN'
-                    ? 'border-neutral-900 bg-neutral-900 text-white font-semibold'
-                    : 'border-neutral-300 bg-white text-neutral-700'
+                    ? 'border-primary bg-primary text-primary-foreground font-semibold'
+                    : 'border-input bg-card text-foreground'
                 }`}
               >
                 <input
@@ -607,8 +544,8 @@ export const CompanyInventoryView: React.FC = () => {
               <label
                 className={`p-2 border rounded text-center cursor-pointer ${
                   adjustType === 'ADJUSTMENT_OUT'
-                    ? 'border-neutral-900 bg-neutral-900 text-white font-semibold'
-                    : 'border-neutral-300 bg-white text-neutral-700'
+                    ? 'border-primary bg-primary text-primary-foreground font-semibold'
+                    : 'border-input bg-card text-foreground'
                 }`}
               >
                 <input
@@ -625,43 +562,36 @@ export const CompanyInventoryView: React.FC = () => {
           </div>
 
           <div>
-            <label className="block font-semibold text-neutral-700 mb-1">Quantity</label>
-            <input
+            <Label className="mb-1">Quantity</Label>
+            <Input
               type="number"
               min="1"
               required
               value={adjustQuantity}
               onChange={(e) => setAdjustQuantity(Number(e.target.value))}
-              className="w-full p-2 border border-neutral-300 rounded font-mono"
+              className="w-full font-mono"
             />
           </div>
 
           <div>
-            <label className="block font-semibold text-neutral-700 mb-1">Audit Reconciliation Reason</label>
-            <input
+            <Label className="mb-1">Audit Reconciliation Reason</Label>
+            <Input
               type="text"
               required
               value={adjustNotes}
               onChange={(e) => setAdjustNotes(e.target.value)}
-              className="w-full p-2 border border-neutral-300 rounded"
+              className="w-full"
               placeholder="e.g. Physical inventory variance found during quarterly audit"
             />
           </div>
 
-          <div className="flex justify-end gap-2 pt-3 border-t border-neutral-200">
-            <button
-              type="button"
-              onClick={() => setIsAdjustModalOpen(false)}
-              className="px-3.5 py-1.5 text-neutral-700 border border-neutral-300 rounded hover:bg-neutral-50"
-            >
+          <div className="flex justify-end gap-2 pt-3 border-t border-border">
+            <Button type="button" variant="secondary" size="sm" onClick={() => setIsAdjustModalOpen(false)}>
               Cancel
-            </button>
-            <button
-              type="submit"
-              className="px-4 py-1.5 font-semibold bg-neutral-900 text-white rounded hover:bg-neutral-800"
-            >
+            </Button>
+            <Button type="submit" variant="primary" size="sm">
               Post Adjustment
-            </button>
+            </Button>
           </div>
         </form>
       </Modal>

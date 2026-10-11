@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { Modal } from '../components/common/Modal';
 import { Badge } from '../components/common/Badge';
+import { Alert, Button, Input, Label, PageHeader, SearchInput, Select, TableShell, Table, THead, TBody, TR, TH, TD } from '../components/ui';
 
 interface PaymentsViewProps {
   initialInvoiceId?: string | null;
@@ -118,59 +119,49 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
   return (
     <div className="space-y-6">
       {/* Header & Controls */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 bg-white border border-neutral-200 rounded-lg shadow-2xs">
-        <div>
-          <h1 className="text-xl font-bold tracking-tight text-neutral-950">Payment Collections &amp; Receipts</h1>
-          <p className="text-xs text-neutral-500 font-mono mt-0.5">
-            Credit ledger postings • Overpayment invariant enforcement • Multi-mode remittances
-          </p>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <div className="relative">
-            <Search className="w-4 h-4 text-neutral-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
+      <PageHeader
+        title="Payment Collections & Receipts"
+        subtitle="Credit ledger postings • Overpayment invariant enforcement • Multi-mode remittances"
+        actions={
+          <>
+            <SearchInput
+              icon={<Search className="w-4 h-4" />}
               type="text"
               placeholder="Search reference # or customer..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9 pr-3 py-1.5 text-xs border border-neutral-300 rounded focus:ring-1 focus:ring-neutral-900 focus:outline-none w-64 bg-white"
             />
-          </div>
-
-          <button
-            onClick={handleOpenRecord}
-            className="px-3.5 py-1.5 text-xs font-semibold bg-neutral-900 text-white rounded hover:bg-neutral-800 transition-colors flex items-center gap-1.5 shadow-2xs"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>Record Payment</span>
-          </button>
-        </div>
-      </div>
+            <Button variant="primary" size="md" onClick={handleOpenRecord}>
+              <Plus className="w-3.5 h-3.5" />
+              <span>Record Payment</span>
+            </Button>
+          </>
+        }
+      />
 
       {/* Payments Register Table */}
-      <div className="bg-white border border-neutral-200 rounded-lg shadow-2xs overflow-hidden">
+      <TableShell>
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse">
+          <Table className="text-left border-collapse">
             <caption className="sr-only">Payments register</caption>
-            <thead>
-              <tr className="border-b border-neutral-200 bg-neutral-50/80 font-mono text-neutral-600 text-[11px]">
-                <th scope="col" className="py-3 px-4">Receipt Date</th>
-                <th scope="col" className="py-3 px-3">Against Invoice</th>
-                <th scope="col" className="py-3 px-3">Customer (Payer)</th>
-                <th scope="col" className="py-3 px-3">Payment Method</th>
-                <th scope="col" className="py-3 px-3">Reference / UTR</th>
-                <th scope="col" className="py-3 px-3 text-right">Amount Collected</th>
-                <th scope="col" className="py-3 px-3 text-center">Status</th>
-                <th scope="col" className="py-3 px-4 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-neutral-200 font-sans">
+            <THead>
+              <TR className="hover:bg-transparent">
+                <TH scope="col">Receipt Date</TH>
+                <TH scope="col">Against Invoice</TH>
+                <TH scope="col">Customer (Payer)</TH>
+                <TH scope="col">Payment Method</TH>
+                <TH scope="col">Reference / UTR</TH>
+                <TH scope="col" className="text-right">Amount Collected</TH>
+                <TH scope="col" className="text-center">Status</TH>
+                <TH scope="col" className="text-right px-4">Actions</TH>
+              </TR>
+            </THead>
+            <TBody>
               {filteredPayments.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-8 text-center text-neutral-400">
+                  <TD colSpan={8} className="py-8 text-center text-muted-foreground">
                     No payment collections recorded.
-                  </td>
+                  </TD>
                 </tr>
               ) : (
                 filteredPayments.map((pay) => {
@@ -178,68 +169,64 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                   const isCancelled = pay.status === 'CANCELLED';
 
                   return (
-                    <tr key={pay.id} className="hover:bg-neutral-50/70 font-mono text-[11px]">
-                      <td className="py-3 px-4 text-neutral-500">
+                    <TR key={pay.id} className="font-mono text-[11px]">
+                      <TD className="text-muted-foreground">
                         {new Date(pay.payment_date).toLocaleDateString()}
-                      </td>
+                      </TD>
 
-                      <td className="py-3 px-3 font-semibold text-neutral-900">
+                      <TD className="font-semibold">
                         {inv ? (
                           <button
                             onClick={() => onOpenInvoice && onOpenInvoice(inv.id)}
-                            className="hover:underline flex items-center gap-1 text-neutral-900 font-bold"
+                            className="hover:underline flex items-center gap-1 text-foreground font-bold"
                           >
                             <span>{inv.invoice_number}</span>
                           </button>
                         ) : (
                           'Unknown Invoice'
                         )}
-                      </td>
+                      </TD>
 
-                      <td className="py-3 px-3 font-sans text-neutral-800">
+                      <TD className="font-sans">
                         {inv?.customer_snapshot?.customer_name || 'N/A'}
-                      </td>
+                      </TD>
 
-                      <td className="py-3 px-3">
+                      <TD>
                         <Badge variant="neutral">{pay.payment_method}</Badge>
-                      </td>
+                      </TD>
 
-                      <td className="py-3 px-3 text-neutral-600">
+                      <TD className="text-muted-foreground">
                         <div>{pay.reference_number || 'N/A'}</div>
-                        {pay.notes && <div className="text-[10px] text-neutral-400 truncate max-w-xs">{pay.notes}</div>}
-                      </td>
+                        {pay.notes && <div className="text-[10px] text-muted-foreground truncate max-w-xs">{pay.notes}</div>}
+                      </TD>
 
-                      <td className="py-3 px-3 text-right font-bold text-emerald-800">
-                        <span className={isCancelled ? 'line-through text-neutral-400' : ''}>
+                      <TD className="text-right font-bold text-emerald-800 dark:text-emerald-300">
+                        <span className={isCancelled ? 'line-through text-muted-foreground' : ''}>
                           {formatINR(pay.amount)}
                         </span>
-                      </td>
+                      </TD>
 
-                      <td className="py-3 px-3 text-center">
+                      <TD className="text-center">
                         <Badge variant={isCancelled ? 'danger' : 'success'}>
                           {pay.status}
                         </Badge>
-                      </td>
+                      </TD>
 
-                      <td className="py-3 px-4 text-right">
+                      <TD className="text-right">
                         {!isCancelled && (
-                          <button
-                            onClick={() => handleCancelPayment(pay.id)}
-                            className="text-neutral-400 hover:text-rose-600 font-medium font-sans text-xs"
-                            title="Reverse or cancel this payment"
-                          >
+                          <Button variant="ghost" size="sm" onClick={() => handleCancelPayment(pay.id)} title="Reverse or cancel this payment">
                             Cancel
-                          </button>
+                          </Button>
                         )}
-                      </td>
-                    </tr>
+                      </TD>
+                    </TR>
                   );
                 })
               )}
-            </tbody>
-          </table>
+            </TBody>
+          </Table>
         </div>
-      </div>
+      </TableShell>
 
       {/* Record Payment Modal */}
       <Modal
@@ -251,20 +238,22 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
       >
         <form onSubmit={handleSavePayment} className="space-y-4 text-xs">
           {paymentError && (
-            <div className="p-2.5 bg-rose-50 border border-rose-200 text-rose-800 rounded flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
-              <span>{paymentError}</span>
-            </div>
+            <Alert tone="destructive">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{paymentError}</span>
+              </div>
+            </Alert>
           )}
 
           <div>
-            <label className="block font-semibold text-neutral-700 mb-1">
+            <Label className="block mb-1">
               Select Finalized Invoice with Outstanding Balance *
-            </label>
-            <select
+            </Label>
+            <Select
               value={formInvoiceId}
               onChange={(e) => handleSelectInvoiceInForm(e.target.value)}
-              className="w-full p-2 border border-neutral-300 rounded bg-white text-xs font-mono"
+              className="w-full font-mono"
             >
               <option value="">-- Choose Invoice --</option>
               {finalizedInvoicesWithOutstanding.map((inv) => {
@@ -275,20 +264,20 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                   </option>
                 );
               })}
-            </select>
+            </Select>
           </div>
 
           {selectedInvOutstanding && (
-            <div className="p-3 bg-neutral-50 border border-neutral-200 rounded font-mono text-[11px] grid grid-cols-2 gap-2">
+            <div className="p-3 bg-muted border border-border rounded font-mono text-[11px] grid grid-cols-2 gap-2">
               <div>
-                <span className="text-neutral-500">Invoice Total:</span>{' '}
-                <span className="font-semibold text-neutral-900">
+                <span className="text-muted-foreground">Invoice Total:</span>{' '}
+                <span className="font-semibold text-foreground">
                   {formatINR(invoices[formInvoiceId]?.grand_total || 0)}
                 </span>
               </div>
               <div>
-                <span className="text-neutral-500">Remaining Outstanding:</span>{' '}
-                <span className="font-bold text-amber-800">
+                <span className="text-muted-foreground">Remaining Outstanding:</span>{' '}
+                <span className="font-bold text-amber-800 dark:text-amber-300">
                   {formatINR(selectedInvOutstanding.outstanding)}
                 </span>
               </div>
@@ -297,10 +286,8 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block font-semibold text-neutral-700 mb-1">
-                Amount Received (₹) *
-              </label>
-              <input
+              <Label className="block mb-1">Amount Received (₹) *</Label>
+              <Input
                 type="number"
                 step="0.01"
                 min="0.01"
@@ -308,79 +295,72 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                 required
                 value={formAmount}
                 onChange={(e) => setFormAmount(Number(e.target.value))}
-                className="w-full p-2 border border-neutral-300 rounded font-mono font-bold text-neutral-950"
+                className="w-full font-mono font-bold"
               />
-              <span className="text-[10px] text-neutral-400">
+              <span className="text-[10px] text-muted-foreground">
                 Rule 35: Overpayment &gt; outstanding is disallowed
               </span>
             </div>
 
             <div>
-              <label className="block font-semibold text-neutral-700 mb-1">Payment Method</label>
-              <select
+              <Label className="block mb-1">Payment Method</Label>
+              <Select
                 value={formMethod}
                 onChange={(e) => setFormMethod(e.target.value as PaymentMethod)}
-                className="w-full p-2 border border-neutral-300 rounded bg-white font-mono"
+                className="w-full font-mono"
               >
                 <option value="BANK_TRANSFER">BANK TRANSFER (NEFT/RTGS)</option>
                 <option value="UPI">UPI (Unified Payments Interface)</option>
                 <option value="CHEQUE">CHEQUE</option>
                 <option value="CASH">CASH</option>
                 <option value="OTHER">OTHER</option>
-              </select>
+              </Select>
             </div>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block font-semibold text-neutral-700 mb-1">Receipt Date</label>
-              <input
+              <Label className="block mb-1">Receipt Date</Label>
+              <Input
                 type="date"
                 required
                 value={formDate}
                 onChange={(e) => setFormDate(e.target.value)}
-                className="w-full p-2 border border-neutral-300 rounded font-mono"
+                className="w-full font-mono"
               />
             </div>
 
             <div>
-              <label className="block font-semibold text-neutral-700 mb-1">Transaction Ref / UTR / Cheque #</label>
-              <input
+              <Label className="block mb-1">Transaction Ref / UTR / Cheque #</Label>
+              <Input
                 type="text"
                 required
                 value={formReference}
                 onChange={(e) => setFormReference(e.target.value)}
-                className="w-full p-2 border border-neutral-300 rounded font-mono"
+                className="w-full font-mono"
                 placeholder="e.g. UTR-HDFC2601992"
               />
             </div>
           </div>
 
           <div>
-            <label className="block font-semibold text-neutral-700 mb-1">Remittance Remarks / Notes</label>
-            <input
+            <Label className="block mb-1">Remittance Remarks / Notes</Label>
+            <Input
               type="text"
               value={formNotes}
               onChange={(e) => setFormNotes(e.target.value)}
-              className="w-full p-2 border border-neutral-300 rounded"
+              className="w-full"
               placeholder="e.g. RTGS settlement cleared from ICICI Bank"
             />
           </div>
 
-          <div className="flex justify-end gap-2 pt-3 border-t border-neutral-200">
-            <button
-              type="button"
-              onClick={() => setIsRecordModalOpen(false)}
-              className="px-3.5 py-1.5 text-neutral-700 border border-neutral-300 rounded hover:bg-neutral-50"
-            >
+          <div className="flex justify-end gap-2 pt-3 border-t border-border">
+            <Button type="button" variant="secondary" size="sm" onClick={() => setIsRecordModalOpen(false)}>
               Cancel
-            </button>
-            <button
-              type="submit"
-              className="px-4 py-1.5 font-semibold bg-neutral-900 text-white rounded hover:bg-neutral-800"
-            >
+            </Button>
+            <Button type="submit" variant="primary" size="sm">
               Post Payment
-            </button>
+            </Button>
           </div>
         </form>
       </Modal>

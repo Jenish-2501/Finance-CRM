@@ -11,6 +11,7 @@ import {
   Clock
 } from 'lucide-react';
 import { Badge } from '../components/common/Badge';
+import { Button, Card, CardHeader, CardTitle, KpiCard, PageHeader } from '../components/ui';
 
 interface DashboardViewProps {
   onNavigate: (tab: string) => void;
@@ -71,143 +72,87 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate, onOpen
   return (
     <div className="space-y-6">
       {/* Top Banner & Quick Shortcuts */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 bg-white border border-neutral-200 rounded-lg shadow-2xs">
-        <div>
-          <h1 className="text-xl font-bold tracking-tight text-neutral-950">Financial &amp; Operations Overview</h1>
-          <p className="text-xs text-neutral-500 font-mono mt-0.5">
-            Normalized double-entry reconciliation • Real-time movement aggregation
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            onClick={() => onNavigate('billing')}
-            className="px-3 py-1.5 text-xs font-semibold bg-neutral-900 text-white rounded hover:bg-neutral-800 transition-colors flex items-center gap-1.5 shadow-2xs"
-          >
-            <FileCheck className="w-3.5 h-3.5" />
-            <span>Bill Customer Inventory</span>
-          </button>
-          <button
-            onClick={() => onNavigate('customer-inventory')}
-            className="px-3 py-1.5 text-xs font-medium bg-white text-neutral-700 border border-neutral-300 rounded hover:bg-neutral-50 transition-colors flex items-center gap-1.5"
-          >
-            <Truck className="w-3.5 h-3.5 text-neutral-500" />
-            <span>Dispatch Stock</span>
-          </button>
-          <button
-            onClick={() => onNavigate('company-inventory')}
-            className="px-3 py-1.5 text-xs font-medium bg-white text-neutral-700 border border-neutral-300 rounded hover:bg-neutral-50 transition-colors flex items-center gap-1.5"
-          >
-            <Layers className="w-3.5 h-3.5 text-neutral-500" />
-            <span>Receive Inward Stock</span>
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        title="Financial & Operations Overview"
+        subtitle="Normalized double-entry reconciliation • Real-time movement aggregation"
+        actions={
+          <>
+            <Button variant="primary" size="sm" onClick={() => onNavigate('billing')}>
+              <FileCheck className="w-3.5 h-3.5" />
+              <span>Bill Customer Inventory</span>
+            </Button>
+            <Button variant="secondary" size="sm" onClick={() => onNavigate('customer-inventory')}>
+              <Truck className="w-3.5 h-3.5 text-muted-foreground" />
+              <span>Dispatch Stock</span>
+            </Button>
+            <Button variant="secondary" size="sm" onClick={() => onNavigate('company-inventory')}>
+              <Layers className="w-3.5 h-3.5 text-muted-foreground" />
+              <span>Receive Inward Stock</span>
+            </Button>
+          </>
+        }
+      />
 
       {/* KPI Cards Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Total Sales */}
-        <div className="p-4 bg-white border border-neutral-200 rounded-lg shadow-2xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-neutral-500 uppercase tracking-wider">
-              Total Invoiced Sales
-            </span>
-            <div className="p-1.5 bg-neutral-100 rounded text-neutral-700">
-              <TrendingUp className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="mt-2 text-2xl font-bold font-mono tracking-tight text-neutral-950">
-            {formatINR(totalSales)}
-          </div>
-          <div className="mt-1 text-[11px] text-neutral-500 font-mono">
-            {finalizedInvoices.length} Finalized Invoices
-          </div>
-        </div>
-
-        {/* Total Collections */}
-        <div className="p-4 bg-white border border-neutral-200 rounded-lg shadow-2xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-neutral-500 uppercase tracking-wider">
-              Total Collections
-            </span>
-            <div className="p-1.5 bg-emerald-50 rounded text-emerald-700">
-              <CreditCard className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="mt-2 text-2xl font-bold font-mono tracking-tight text-emerald-800">
-            {formatINR(totalCollections)}
-          </div>
-          <div className="mt-1 text-[11px] text-emerald-700 font-mono">
-            {activePayments.length} Active Receipts
-          </div>
-        </div>
-
-        {/* Outstanding Receivables */}
-        <div className="p-4 bg-white border border-neutral-200 rounded-lg shadow-2xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-neutral-500 uppercase tracking-wider">
-              Outstanding Receivables
-            </span>
-            <div className="p-1.5 bg-amber-50 rounded text-amber-700">
-              <AlertCircle className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="mt-2 text-2xl font-bold font-mono tracking-tight text-amber-900">
-            {formatINR(totalOutstanding)}
-          </div>
-          <div className="mt-1 text-[11px] text-amber-700 font-mono">
-            Sales - Receipts Balance
-          </div>
-        </div>
-
-        {/* Inventory Holdings */}
-        <div className="p-4 bg-white border border-neutral-200 rounded-lg shadow-2xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-neutral-500 uppercase tracking-wider">
-              Inventory in Field
-            </span>
-            <div className="p-1.5 bg-sky-50 rounded text-sky-700">
-              <Truck className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="mt-2 text-2xl font-bold font-mono tracking-tight text-neutral-900">
-            {totalCustomerHoldingUnits.toLocaleString()} <span className="text-sm font-normal text-neutral-500">Units</span>
-          </div>
-          <div className="mt-1 text-[11px] text-neutral-500 font-mono">
-            Company Stock: {totalCompanyStockUnits.toLocaleString()} Units
-          </div>
-        </div>
+        <KpiCard
+          label="Total Invoiced Sales"
+          value={formatINR(totalSales)}
+          sub={`${finalizedInvoices.length} Finalized Invoices`}
+          icon={<TrendingUp className="w-4 h-4" />}
+          tone="default"
+        />
+        <KpiCard
+          label="Total Collections"
+          value={formatINR(totalCollections)}
+          sub={`${activePayments.length} Active Receipts`}
+          icon={<CreditCard className="w-4 h-4" />}
+          tone="success"
+          valueClassName="text-emerald-800 dark:text-emerald-300"
+          subClassName="text-emerald-700 dark:text-emerald-300"
+        />
+        <KpiCard
+          label="Outstanding Receivables"
+          value={formatINR(totalOutstanding)}
+          sub="Sales - Receipts Balance"
+          icon={<AlertCircle className="w-4 h-4" />}
+          tone="warning"
+          valueClassName="text-amber-900 dark:text-amber-200"
+          subClassName="text-amber-700 dark:text-amber-300"
+        />
+        <KpiCard
+          label="Inventory in Field"
+          value={`${totalCustomerHoldingUnits.toLocaleString()} Units`}
+          sub={`Company Stock: ${totalCompanyStockUnits.toLocaleString()} Units`}
+          icon={<Truck className="w-4 h-4" />}
+          tone="info"
+        />
       </div>
 
       {/* Operational Tables Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Recent Invoices */}
-        <div className="bg-white border border-neutral-200 rounded-lg shadow-2xs overflow-hidden">
-          <div className="px-5 py-3.5 border-b border-neutral-200 flex items-center justify-between bg-neutral-50/60">
+        <Card className="overflow-hidden shadow-2xs">
+          <CardHeader>
             <div className="flex items-center gap-2">
-              <FileCheck className="w-4 h-4 text-neutral-600" />
-              <h2 className="text-xs font-bold uppercase tracking-wider text-neutral-800">
-                Recent Invoices
-              </h2>
+              <FileCheck className="w-4 h-4 text-muted-foreground" />
+              <CardTitle>Recent Invoices</CardTitle>
             </div>
-            <button
-              onClick={() => onNavigate('invoices')}
-              className="text-xs text-neutral-600 hover:text-neutral-900 font-medium font-mono"
-            >
+            <Button variant="ghost" size="sm" onClick={() => onNavigate('invoices')} className="font-mono">
               View all →
-            </button>
-          </div>
+            </Button>
+          </CardHeader>
 
-          <div className="divide-y divide-neutral-200 text-xs">
+          <div className="divide-y divide-border text-xs">
             {recentInvoices.map((inv) => (
               <div
                 key={inv.id}
                 onClick={() => onOpenInvoice(inv.id)}
-                className="p-3.5 hover:bg-neutral-50 flex items-center justify-between cursor-pointer transition-colors"
+                className="p-3.5 hover:bg-muted flex items-center justify-between cursor-pointer transition-colors"
               >
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="font-mono font-bold text-neutral-900">{inv.invoice_number}</span>
+                    <span className="font-mono font-bold text-foreground">{inv.invoice_number}</span>
                     <Badge
                       variant={
                         inv.status === 'FINALIZED'
@@ -220,62 +165,57 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate, onOpen
                       {inv.status}
                     </Badge>
                   </div>
-                  <div className="text-neutral-600 text-[11px] mt-0.5">
+                  <div className="text-muted-foreground text-[11px] mt-0.5">
                     {inv.customer_snapshot.customer_name}
                   </div>
                 </div>
 
                 <div className="text-right">
-                  <div className="font-mono font-bold text-neutral-950">
+                  <div className="font-mono font-bold text-foreground">
                     {formatINR(inv.grand_total)}
                   </div>
-                  <div className="text-[11px] font-mono text-neutral-400">
+                  <div className="text-[11px] font-mono text-muted-foreground">
                     {new Date(inv.invoice_date).toLocaleDateString()}
                   </div>
                 </div>
               </div>
             ))}
           </div>
-        </div>
+        </Card>
 
         {/* Recent Payment Receipts */}
-        <div className="bg-white border border-neutral-200 rounded-lg shadow-2xs overflow-hidden">
-          <div className="px-5 py-3.5 border-b border-neutral-200 flex items-center justify-between bg-neutral-50/60">
+        <Card className="overflow-hidden shadow-2xs">
+          <CardHeader>
             <div className="flex items-center gap-2">
-              <CreditCard className="w-4 h-4 text-neutral-600" />
-              <h2 className="text-xs font-bold uppercase tracking-wider text-neutral-800">
-                Recent Payment Collections
-              </h2>
+              <CreditCard className="w-4 h-4 text-muted-foreground" />
+              <CardTitle>Recent Payment Collections</CardTitle>
             </div>
-            <button
-              onClick={() => onNavigate('payments')}
-              className="text-xs text-neutral-600 hover:text-neutral-900 font-medium font-mono"
-            >
+            <Button variant="ghost" size="sm" onClick={() => onNavigate('payments')} className="font-mono">
               View all →
-            </button>
-          </div>
+            </Button>
+          </CardHeader>
 
-          <div className="divide-y divide-neutral-200 text-xs">
+          <div className="divide-y divide-border text-xs">
             {recentPayments.length === 0 ? (
-              <div className="p-6 text-center text-neutral-400 text-xs">No payments recorded yet.</div>
+              <div className="p-6 text-center text-muted-foreground text-xs">No payments recorded yet.</div>
             ) : (
               recentPayments.map((pay) => {
                 const inv = invoices[pay.invoice_id];
                 return (
-                  <div key={pay.id} className="p-3.5 hover:bg-neutral-50 flex items-center justify-between">
+                  <div key={pay.id} className="p-3.5 hover:bg-muted flex items-center justify-between">
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className="font-mono font-semibold text-emerald-800">
+                        <span className="font-mono font-semibold text-emerald-800 dark:text-emerald-300">
                           {formatINR(pay.amount)}
                         </span>
                         <Badge variant="neutral">{pay.payment_method}</Badge>
                       </div>
-                      <div className="text-neutral-500 text-[11px] mt-0.5">
+                      <div className="text-muted-foreground text-[11px] mt-0.5">
                         Against Inv #{inv?.invoice_number || 'N/A'} • {pay.reference_number || 'No Ref'}
                       </div>
                     </div>
 
-                    <div className="text-right text-[11px] font-mono text-neutral-500">
+                    <div className="text-right text-[11px] font-mono text-muted-foreground">
                       {new Date(pay.payment_date).toLocaleDateString()}
                     </div>
                   </div>
@@ -283,29 +223,24 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate, onOpen
               })
             )}
           </div>
-        </div>
+        </Card>
       </div>
 
       {/* Recent Movements & Audit Trail */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Company Movements */}
-        <div className="bg-white border border-neutral-200 rounded-lg shadow-2xs overflow-hidden">
-          <div className="px-5 py-3.5 border-b border-neutral-200 flex items-center justify-between bg-neutral-50/60">
+        <Card className="overflow-hidden shadow-2xs">
+          <CardHeader>
             <div className="flex items-center gap-2">
-              <Layers className="w-4 h-4 text-neutral-600" />
-              <h2 className="text-xs font-bold uppercase tracking-wider text-neutral-800">
-                Recent Inventory Movements
-              </h2>
+              <Layers className="w-4 h-4 text-muted-foreground" />
+              <CardTitle>Recent Inventory Movements</CardTitle>
             </div>
-            <button
-              onClick={() => onNavigate('company-inventory')}
-              className="text-xs text-neutral-600 hover:text-neutral-900 font-medium font-mono"
-            >
+            <Button variant="ghost" size="sm" onClick={() => onNavigate('company-inventory')} className="font-mono">
               View ledger →
-            </button>
-          </div>
+            </Button>
+          </CardHeader>
 
-          <div className="divide-y divide-neutral-200 text-xs">
+          <div className="divide-y divide-border text-xs">
             {recentMovements.map((mov) => {
               const prod = products[mov.product_id];
               const isPositive =
@@ -314,22 +249,22 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate, onOpen
                 mov.movement_type === 'ADJUSTMENT_IN';
 
               return (
-                <div key={mov.id} className="p-3.5 flex items-center justify-between hover:bg-neutral-50">
+                <div key={mov.id} className="p-3.5 flex items-center justify-between hover:bg-muted">
                   <div>
-                    <div className="font-semibold text-neutral-900">{prod?.product_name || 'Item'}</div>
-                    <div className="text-neutral-500 text-[11px]">{mov.notes}</div>
+                    <div className="font-semibold text-foreground">{prod?.product_name || 'Item'}</div>
+                    <div className="text-muted-foreground text-[11px]">{mov.notes}</div>
                   </div>
 
                   <div className="text-right">
                     <div
                       className={`font-mono font-bold ${
-                        isPositive ? 'text-emerald-700' : 'text-neutral-800'
+                        isPositive ? 'text-emerald-700 dark:text-emerald-300' : 'text-foreground'
                       }`}
                     >
                       {isPositive ? '+' : '-'}
                       {mov.quantity}
                     </div>
-                    <div className="text-[10px] font-mono uppercase text-neutral-400">
+                    <div className="text-[10px] font-mono uppercase text-muted-foreground">
                       {mov.movement_type.replace('_', ' ')}
                     </div>
                   </div>
@@ -337,45 +272,40 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate, onOpen
               );
             })}
           </div>
-        </div>
+        </Card>
 
         {/* Audit Activity */}
-        <div className="bg-white border border-neutral-200 rounded-lg shadow-2xs overflow-hidden">
-          <div className="px-5 py-3.5 border-b border-neutral-200 flex items-center justify-between bg-neutral-50/60">
+        <Card className="overflow-hidden shadow-2xs">
+          <CardHeader>
             <div className="flex items-center gap-2">
-              <Clock className="w-4 h-4 text-neutral-600" />
-              <h2 className="text-xs font-bold uppercase tracking-wider text-neutral-800">
-                Recent System Mutations
-              </h2>
+              <Clock className="w-4 h-4 text-muted-foreground" />
+              <CardTitle>Recent System Mutations</CardTitle>
             </div>
-            <button
-              onClick={() => onNavigate('activity')}
-              className="text-xs text-neutral-600 hover:text-neutral-900 font-medium font-mono"
-            >
+            <Button variant="ghost" size="sm" onClick={() => onNavigate('activity')} className="font-mono">
               Full audit log →
-            </button>
-          </div>
+            </Button>
+          </CardHeader>
 
-          <div className="divide-y divide-neutral-200 text-xs">
+          <div className="divide-y divide-border text-xs">
             {auditLogs.slice(0, 5).map((log) => (
-              <div key={log.id} className="p-3.5 flex items-center justify-between hover:bg-neutral-50">
+              <div key={log.id} className="p-3.5 flex items-center justify-between hover:bg-muted">
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="font-mono text-neutral-800 font-semibold">{log.action}</span>
-                    <span className="text-[10px] font-mono text-neutral-400">by {log.user_name}</span>
+                    <span className="font-mono text-foreground font-semibold">{log.action}</span>
+                    <span className="text-[10px] font-mono text-muted-foreground">by {log.user_name}</span>
                   </div>
-                  <div className="text-neutral-500 text-[11px] truncate max-w-xs mt-0.5">
+                  <div className="text-muted-foreground text-[11px] truncate max-w-xs mt-0.5">
                     {log.entity_type} #{log.entity_id}
                   </div>
                 </div>
 
-                <div className="text-right font-mono text-[10px] text-neutral-400">
+                <div className="text-right font-mono text-[10px] text-muted-foreground">
                   {new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 </div>
               </div>
             ))}
           </div>
-        </div>
+        </Card>
       </div>
     </div>
   );

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { DatabaseBackup, Download, CheckCircle2, AlertTriangle, HardDrive, RotateCcw } from 'lucide-react';
+import { DatabaseBackup, Download, CheckCircle2, AlertTriangle, HardDrive, RotateCcw, Palette } from 'lucide-react';
 import { isElectronShell } from '../utils/shellEnv';
+import { ThemeToggle, Alert, Button, Card, CardTitle } from '../components/ui';
 
 export const AppSettingsView: React.FC = () => {
   const [busy, setBusy] = useState(false);
@@ -88,24 +89,37 @@ export const AppSettingsView: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="p-5 bg-white border border-neutral-200 rounded-lg shadow-2xs">
-        <h1 className="text-xl font-bold tracking-tight text-neutral-950 flex items-center gap-2">
+      <div className="p-5 bg-card border border-border rounded-lg shadow-2xs">
+        <h1 className="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
           <HardDrive className="w-5 h-5" /> App Settings
         </h1>
-        <p className="text-xs text-neutral-500 font-mono mt-0.5">
+        <p className="text-xs text-muted-foreground font-mono mt-0.5">
           Periodic database backups • Full data + structure snapshots
         </p>
       </div>
 
-      <div className="bg-white border border-neutral-200 rounded-lg p-5 shadow-2xs space-y-4">
-        <div className="flex items-center gap-2 border-b border-neutral-200 pb-3">
-          <DatabaseBackup className="w-4 h-4 text-neutral-600" />
-          <h2 className="text-xs font-bold uppercase tracking-wider text-neutral-900">
+      <div className="bg-card border border-border rounded-lg p-5 shadow-xs space-y-4">
+        <div className="flex items-center justify-between gap-3 border-b border-border pb-3">
+          <div className="flex items-center gap-2">
+            <Palette className="w-4 h-4 text-primary" />
+            <h2 className="text-xs font-bold uppercase tracking-wider text-foreground">Appearance</h2>
+          </div>
+          <ThemeToggle />
+        </div>
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          Switch between light and dark. Legal documents (invoices, challans, ledgers) always stay black-on-white for print parity.
+        </p>
+      </div>
+
+      <div className="bg-card border border-border rounded-lg p-5 shadow-2xs space-y-4">
+        <div className="flex items-center gap-2 border-b border-border pb-3">
+          <DatabaseBackup className="w-4 h-4 text-muted-foreground" />
+          <h2 className="text-xs font-bold uppercase tracking-wider text-foreground">
             Full Database Backup
           </h2>
         </div>
 
-        <p className="text-xs text-neutral-600 leading-relaxed">
+        <p className="text-xs text-muted-foreground leading-relaxed">
           Downloads one file containing the <strong>entire database — every record plus the full
           table structure</strong>. Restoring it later brings back everything exactly as it was.
           Tip for periodic backups: plug in a pen drive, click below, and save the file there with
@@ -113,28 +127,23 @@ export const AppSettingsView: React.FC = () => {
         </p>
 
         {status && (
-          <div
-            role={status.kind === 'error' ? 'alert' : 'status'}
-            className={`p-3 rounded-lg text-xs flex items-center gap-2 ${
-              status.kind === 'success'
-                ? 'bg-emerald-50 border border-emerald-200 text-emerald-900'
-                : 'bg-rose-50 border border-rose-200 text-rose-900'
-            }`}
-          >
+          <Alert tone={status.kind === 'success' ? 'success' : 'destructive'} role={status.kind === 'success' ? 'status' : 'alert'}>
+            <div className="flex items-center gap-2">
             {status.kind === 'success' ? (
-              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
             ) : (
-              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+              <AlertTriangle className="w-4 h-4 shrink-0" />
             )}
             <span className="break-all">{status.text}</span>
-          </div>
+            </div>
+          </Alert>
         )}
 
         <div>
           <button
             onClick={() => void handleDownloadBackup()}
             disabled={busy}
-            className="px-5 py-2 font-semibold bg-neutral-900 text-white rounded hover:bg-neutral-800 transition-colors shadow-2xs disabled:opacity-50 flex items-center gap-2 text-xs"
+            className="px-5 py-2 font-semibold bg-primary text-primary-foreground rounded hover:bg-primary/90 transition-colors shadow-2xs disabled:opacity-50 flex items-center gap-2 text-xs"
           >
             <Download className="w-4 h-4" />
             <span>{busy ? 'Preparing backup…' : 'Download Full Backup'}</span>
@@ -142,15 +151,15 @@ export const AppSettingsView: React.FC = () => {
         </div>
       </div>
 
-      <div className="bg-white border border-rose-200 rounded-lg p-5 shadow-2xs space-y-4">
-        <div className="flex items-center gap-2 border-b border-rose-100 pb-3">
-          <AlertTriangle className="w-4 h-4 text-rose-600" />
-          <h2 className="text-xs font-bold uppercase tracking-wider text-neutral-900">
+      <Card className="border-destructive/25 p-5 space-y-4 shadow-2xs">
+        <div className="flex items-center gap-2 border-b border-destructive/20 pb-3">
+          <AlertTriangle className="w-4 h-4 text-destructive" />
+          <CardTitle>
             Restore Database from Backup — Replaces All Current Data
-          </h2>
+          </CardTitle>
         </div>
 
-        <p className="text-xs text-neutral-600 leading-relaxed">
+        <p className="text-xs text-muted-foreground leading-relaxed">
           Pick a backup file and the app <strong>overrides everything currently stored</strong> with
           it. Before replacing, your present database is automatically safety-backed-up. After a
           successful restore, reload the app so every screen reads the restored data.
@@ -158,56 +167,53 @@ export const AppSettingsView: React.FC = () => {
 
         {restored ? (
           <div className="space-y-3">
-            <div
-              role="status"
-              className="p-3 rounded-lg text-xs flex items-center gap-2 bg-emerald-50 border border-emerald-200 text-emerald-900"
-            >
-              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-              <span>Database restored. Your previous data was safety-backed-up automatically. Reload now to use the restored data.</span>
-            </div>
-            <button
-              onClick={handleReload}
-              className="px-5 py-2 font-semibold bg-neutral-900 text-white rounded hover:bg-neutral-800 transition-colors shadow-2xs flex items-center gap-2 text-xs"
-            >
+            <Alert tone="success" role="status">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                <span>Database restored. Your previous data was safety-backed-up automatically. Reload now to use the restored data.</span>
+              </div>
+            </Alert>
+            <Button variant="primary" size="md" onClick={handleReload} className="px-5 py-2 text-xs">
               <RotateCcw className="w-4 h-4" />
               <span>Reload App Data</span>
-            </button>
+            </Button>
           </div>
         ) : (
           <div className="space-y-3">
             {restoreStatus && (
-              <div
-                role="alert"
-                className="p-3 rounded-lg text-xs flex items-center gap-2 bg-rose-50 border border-rose-200 text-rose-900"
-              >
-                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
-                <span className="break-all">{restoreStatus.text}</span>
-              </div>
+              <Alert tone="destructive" role="alert">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span className="break-all">{restoreStatus.text}</span>
+                </div>
+              </Alert>
             )}
 
-            <label className="flex items-start gap-2 text-xs text-neutral-700 cursor-pointer">
+            <label className="flex items-start gap-2 text-xs text-foreground cursor-pointer">
               <input
                 type="checkbox"
                 checked={confirmRestore}
                 onChange={(e) => setConfirmRestore(e.target.checked)}
-                className="mt-0.5"
+                className="mt-0.5 accent-primary"
               />
               <span>I understand this will <strong>replace all current data</strong> with the backup file.</span>
             </label>
 
             <div>
-              <button
+              <Button
+                variant="destructive"
+                size="md"
                 onClick={() => void handleRestoreBackup()}
                 disabled={!confirmRestore || restoring}
-                className="px-5 py-2 font-semibold bg-rose-600 text-white rounded hover:bg-rose-700 transition-colors shadow-2xs disabled:opacity-40 flex items-center gap-2 text-xs"
+                className="px-5 py-2 text-xs"
               >
                 <DatabaseBackup className="w-4 h-4" />
                 <span>{restoring ? 'Restoring…' : 'Restore from Backup…'}</span>
-              </button>
+              </Button>
             </div>
           </div>
         )}
-      </div>
+      </Card>
     </div>
   );
 };

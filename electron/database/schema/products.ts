@@ -7,7 +7,6 @@ export const products = sqliteTable('products', {
   description: text('description').notNull(),
   image: text('image'),
   primaryUnitId: text('primary_unit_id').notNull(),
-  hsnCode: text('hsn_code'),
   isActive: integer('is_active', { mode: 'boolean' }).notNull(),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),

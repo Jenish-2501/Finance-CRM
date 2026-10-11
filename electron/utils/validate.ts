@@ -62,9 +62,11 @@ const ALLOWED_STORE_KEYS = new Set([
   'stockReceiptItems',
   'inventoryMovements',
   'customerInventoryMovements',
+  'dispatchDocuments',
   'invoices',
   'invoiceItems',
   'invoiceAllocations',
+  'invoiceSeries',
   'invoicePayments',
   'auditLogs',
 ]);
@@ -72,7 +74,7 @@ const ALLOWED_STORE_KEYS = new Set([
 export function assertPersistPayload(payload: unknown): asserts payload is Record<string, unknown[]> {
   if (!isRecord(payload)) throw new Error('VALIDATION_FAILED:payload must be an object');
   const keys = Object.keys(payload);
-  if (keys.length === 0 || keys.length > 17) throw new Error('VALIDATION_FAILED:payload shape invalid');
+  if (keys.length === 0 || keys.length > 19) throw new Error('VALIDATION_FAILED:payload shape invalid');
   for (const k of keys) {
     if (!ALLOWED_STORE_KEYS.has(k)) throw new Error(`VALIDATION_FAILED:unknown entity ${k}`);
     const arr = (payload as Record<string, unknown>)[k];

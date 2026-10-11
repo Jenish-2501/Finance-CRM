@@ -1,27 +1,29 @@
 import React from 'react';
 import { hasDesktopBridge, isElectronShell } from '../../utils/shellEnv';
+import { Badge } from './Badge';
 
 // Shows which shell the UI is running in. This permanently disambiguates
 // "the desktop build" (SQLite-backed) from a browser preview (no database),
 // where passcode management and persistence are unavailable.
+// Environment semantics — intentionally NOT themed violet.
 export const ShellBadge: React.FC = () => {
   if (hasDesktopBridge()) {
     return (
-      <span className="text-[10px] font-mono font-semibold px-2 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded tracking-wider">
+      <Badge variant="success" className="text-[10px] font-semibold tracking-wider">
         DESKTOP APP • LOCAL DATABASE
-      </span>
+      </Badge>
     );
   }
   if (isElectronShell()) {
     return (
-      <span className="text-[10px] font-mono font-semibold px-2 py-0.5 bg-rose-50 text-rose-800 border border-rose-200 rounded tracking-wider">
+      <Badge variant="danger" className="text-[10px] font-semibold tracking-wider">
         SHELL ERROR • BRIDGE MISSING
-      </span>
+      </Badge>
     );
   }
   return (
-    <span className="text-[10px] font-mono font-semibold px-2 py-0.5 bg-amber-50 text-amber-800 border border-amber-200 rounded tracking-wider">
+    <Badge variant="warning" className="text-[10px] font-semibold tracking-wider">
       BROWSER PREVIEW • NO DATABASE
-    </span>
+    </Badge>
   );
 };

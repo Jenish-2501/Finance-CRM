@@ -79,9 +79,11 @@ export const tableMap: Record<string, SQLiteTable> = {
   stock_receipt_items: schema.stockReceiptItems,
   inventory_movements: schema.inventoryMovements,
   customer_inventory_movements: schema.customerInventoryMovements,
+  dispatch_documents: schema.dispatchDocuments,
   invoices: schema.invoices,
   invoice_items: schema.invoiceItems,
   invoice_allocations: schema.invoiceAllocations,
+  invoice_series: schema.invoiceSeries,
   invoice_payments: schema.invoicePayments,
   audit_logs: schema.auditLogs,
 };

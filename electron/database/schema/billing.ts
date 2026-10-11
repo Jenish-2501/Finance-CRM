@@ -1,10 +1,11 @@
-import { sqliteTable, text, real } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core';
 
 export const invoices = sqliteTable('invoices', {
   id: text('id').primaryKey(),
   invoiceNumber: text('invoice_number').notNull(),
   customerId: text('customer_id').notNull(),
   invoiceDate: text('invoice_date').notNull(),
+  fy: text('fy').notNull(), // financial year of invoice_date, e.g. '2025-26'
   billingPeriodStart: text('billing_period_start').notNull(),
   billingPeriodEnd: text('billing_period_end').notNull(),
   status: text('status').notNull(),
@@ -68,3 +69,15 @@ export const invoicePayments = sqliteTable('invoice_payments', {
 
 export type InvoiceRow = typeof invoices.$inferSelect;
 export type InvoicePaymentRow = typeof invoicePayments.$inferSelect;
+
+// Per-financial-year invoice numbering series. Plain numbers restart at
+// start_number every FY (no prefix, no padding); fy is UNIQUE.
+export const invoiceSeries = sqliteTable('invoice_series', {
+  id: text('id').primaryKey(),
+  fy: text('fy').notNull(),
+  nextNumber: integer('next_number').notNull(),
+  startNumber: integer('start_number').notNull(),
+  createdAt: text('created_at').notNull(),
+});
+
+export type InvoiceSeriesRow = typeof invoiceSeries.$inferSelect;

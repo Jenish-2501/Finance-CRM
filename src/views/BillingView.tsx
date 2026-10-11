@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAccountingStore } from '../store/accountingStore';
-import { formatINR, calculateTax, roundCurrency, calculateInvoiceTotals } from '../utils/calculations';
+import { formatINR, calculateTax, roundCurrency, calculateInvoiceTotals, getFyForDate, getCustomerStateCode } from '../utils/calculations';
 import {
   CheckCircle,
   AlertCircle,
@@ -8,6 +8,7 @@ import {
   Calendar
 } from 'lucide-react';
 import { Badge } from '../components/common/Badge';
+import { PageHeader, Alert, Button, Card, CardHeader, Input, Label, TableShell, Table, THead, TBody, TR, TH, TD, Textarea } from '../components/ui';
 import { CustomerPicker, firstCustomerId } from '../components/common/CustomerPicker';
 
 interface BillingViewProps {
@@ -22,6 +23,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
   const {
     customers,
     businessSettings,
+    invoiceSeries,
     getBillableMovementsForCustomer,
     createInvoice
   } = useAccountingStore();
@@ -36,6 +38,8 @@ export const BillingView: React.FC<BillingViewProps> = ({
   );
   const [otherCharges, setOtherCharges] = useState(0);
   const [billingNotes, setBillingNotes] = useState('');
+  const [invoiceDate, setInvoiceDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [isCreating, setIsCreating] = useState(false);
   const [isFinalizeImmediately, setIsFinalizeImmediately] = useState(true);
   const [creationError, setCreationError] = useState('');
 
@@ -81,7 +85,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
         lineSubtotal,
         businessSettings.default_gst_rate,
         businessSettings.state_code,
-        customer?.state_code || '24'
+        customer ? getCustomerStateCode(customer) : '24'
       );
       activeItemsToBill.push({
         movement: m,
@@ -111,11 +115,13 @@ export const BillingView: React.FC<BillingViewProps> = ({
   );
 
   const handleGenerateInvoice = () => {
+    if (isCreating) return; // double-submit guard: one number per click
     setCreationError('');
     if (activeItemsToBill.length === 0) {
       setCreationError('Please allocate at least one unbilled movement quantity.');
       return;
     }
+    setIsCreating(true);
 
     // Group items by productId for the invoice items table
     // and attach explicit movement allocations!
@@ -164,8 +170,10 @@ export const BillingView: React.FC<BillingViewProps> = ({
       items: itemsForStore,
       otherCharges: Number(otherCharges) || 0,
       notes: billingNotes,
-      status: isFinalizeImmediately ? 'FINALIZED' : 'DRAFT'
+      status: isFinalizeImmediately ? 'FINALIZED' : 'DRAFT',
+      invoiceDate: new Date(`${invoiceDate}T12:00:00`).toISOString()
     });
+    setIsCreating(false);
 
     if (!result.success || !result.invoiceId) {
       setCreationError(result.error || 'Failed to generate invoice.');
@@ -174,68 +182,85 @@ export const BillingView: React.FC<BillingViewProps> = ({
     }
   };
 
+  // Next number follows the invoice date's FY (backdated bills draw from that FY).
+  const previewFy = getFyForDate(new Date(`${invoiceDate}T12:00:00`).toISOString());
+  const previewSeries = Object.values(invoiceSeries).find((s) => s.fy === previewFy);
+  const previewNext = previewSeries ? previewSeries.next_number : businessSettings.invoice_start_number;
+
   return (
     <div className="space-y-6">
       {/* Top Banner */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 bg-white border border-neutral-200 rounded-lg shadow-2xs">
-        <div>
-          <h1 className="text-xl font-bold tracking-tight text-neutral-950">Billing Wizard</h1>
-          <p className="text-xs text-neutral-500 font-mono mt-0.5">
-            Explicit inventory allocation engine • Converts unbilled dispatches into tax invoices
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2">
+      <PageHeader
+        title="Billing Wizard"
+        subtitle="Explicit inventory allocation engine • Converts unbilled dispatches into tax invoices"
+        actions={
           <Badge variant="neutral" size="md">
-            Next Inv #: {businessSettings.invoice_prefix}
-            {businessSettings.invoice_next_number}
+            FY {previewFy} • Next Inv #: {previewNext}
           </Badge>
-        </div>
-      </div>
+        }
+      />
 
       {/* Customer Selection & Period Config */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 bg-white border border-neutral-200 rounded-lg shadow-2xs text-xs">
+      <Card className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 p-4 text-xs shadow-2xs">
         <div>
-          <label className="block font-semibold text-neutral-700 mb-1 flex items-center gap-1.5">
-            <Building className="w-3.5 h-3.5 text-neutral-500" />
+          <Label className="mb-1 flex items-center gap-1.5">
+            <Building className="w-3.5 h-3.5 text-muted-foreground" />
             Customer / Entity
-          </label>
+          </Label>
           <CustomerPicker
             value={effectiveCustomerId}
             onChange={(id) => setSelectedCustomerId(id)}
             customers={customers}
           />
-          <div className="text-[11px] font-mono text-neutral-500 mt-1">
-            GSTIN: {customer?.gst_number || 'N/A'} • State: {customer?.state} (Code: {customer?.state_code})
+          <div className="text-[11px] font-mono text-muted-foreground mt-1">
+            GSTIN: {customer?.gst_number || 'N/A'} • State: {customer?.state} (Code: {customer ? getCustomerStateCode(customer) : '—'})
           </div>
         </div>
 
         <div>
-          <label className="block font-semibold text-neutral-700 mb-1 flex items-center gap-1.5">
-            <Calendar className="w-3.5 h-3.5 text-neutral-500" />
+          <Label className="mb-1 flex items-center gap-1.5">
+            <Calendar className="w-3.5 h-3.5 text-muted-foreground" />
             Billing Period Range
-          </label>
+          </Label>
           <div className="grid grid-cols-2 gap-2">
-            <input
+            <Input
               type="date"
               value={billingPeriodStart}
               onChange={(e) => setBillingPeriodStart(e.target.value)}
-              className="p-1.5 border border-neutral-300 rounded font-mono"
+              className="font-mono"
             />
-            <input
+            <Input
               type="date"
               value={billingPeriodEnd}
               onChange={(e) => setBillingPeriodEnd(e.target.value)}
-              className="p-1.5 border border-neutral-300 rounded font-mono"
+              className="font-mono"
             />
           </div>
-          <div className="text-[11px] text-neutral-400 mt-1">
+          <div className="text-[11px] text-muted-foreground mt-1">
             Period printed on tax invoice
           </div>
         </div>
 
         <div>
-          <label className="block font-semibold text-neutral-700 mb-1">Invoice Generation Status</label>
+          <Label className="mb-1 flex items-center gap-1.5">
+            <Calendar className="w-3.5 h-3.5 text-muted-foreground" />
+            Invoice Date
+          </Label>
+          <Input
+            type="date"
+            required
+            value={invoiceDate}
+            max={new Date().toISOString().split('T')[0]}
+            onChange={(e) => e.target.value && setInvoiceDate(e.target.value)}
+            className="w-full font-mono"
+          />
+          <div className="text-[11px] text-muted-foreground mt-1">
+            FY {previewFy} • backdating allowed, future dates blocked
+          </div>
+        </div>
+
+        <div>
+          <Label className="mb-1">Invoice Generation Status</Label>
           <div className="flex items-center gap-4 pt-1">
             <label className="flex items-center gap-2 cursor-pointer">
               <input
@@ -244,7 +269,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
                 checked={isFinalizeImmediately}
                 onChange={() => setIsFinalizeImmediately(true)}
               />
-              <span className="font-semibold text-neutral-900">Finalize Immediately</span>
+              <span className="font-semibold text-foreground">Finalize Immediately</span>
             </label>
             <label className="flex items-center gap-2 cursor-pointer">
               <input
@@ -253,56 +278,58 @@ export const BillingView: React.FC<BillingViewProps> = ({
                 checked={!isFinalizeImmediately}
                 onChange={() => setIsFinalizeImmediately(false)}
               />
-              <span className="text-neutral-700">Save as Draft</span>
+              <span className="text-foreground">Save as Draft</span>
             </label>
           </div>
-          <div className="text-[11px] text-neutral-500 mt-1">
+          <div className="text-[11px] text-muted-foreground mt-1">
             Finalized invoices generate financial ledger entries immediately.
           </div>
         </div>
-      </div>
+      </Card>
 
       {creationError && (
-        <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-lg text-xs flex items-center gap-2">
-          <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
-          <span>{creationError}</span>
-        </div>
+        <Alert tone="destructive">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span>{creationError}</span>
+          </div>
+        </Alert>
       )}
 
       {/* Billable Consignment Movements Allocation Table */}
-      <div className="bg-white border border-neutral-200 rounded-lg shadow-2xs overflow-hidden">
-        <div className="p-4 border-b border-neutral-200 bg-neutral-50/70 flex justify-between items-center text-xs">
+      <TableShell>
+        <CardHeader>
           <div>
-            <div className="font-bold text-neutral-950 uppercase tracking-wide text-[11px]">
+            <div className="font-bold text-foreground uppercase tracking-wide text-[11px]">
               Available Unbilled Dispatch Movements ({billableMovements.length})
             </div>
-            <div className="text-neutral-500 text-[11px] mt-0.5">
+            <div className="text-muted-foreground text-[11px] mt-0.5">
               Specify exact quantities to allocate on this invoice. Partial billing preserves remaining balance for future invoices.
             </div>
           </div>
-        </div>
+        </CardHeader>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse">
+          <Table className="text-left border-collapse">
             <caption className="sr-only">Unbilled dispatch movements available for allocation</caption>
-            <thead>
-              <tr className="border-b border-neutral-200 bg-neutral-50/80 font-mono text-neutral-600 text-[11px]">
-                <th scope="col" className="py-3 px-4">Dispatch Movement</th>
-                <th scope="col" className="py-3 px-3">Product Description</th>
-                <th scope="col" className="py-3 px-3 text-right">Dispatched</th>
-                <th scope="col" className="py-3 px-3 text-right">Already Billed</th>
-                <th scope="col" className="py-3 px-3 text-right">Available Billable</th>
-                <th scope="col" className="py-3 px-3 text-right">Unit Price</th>
-                <th scope="col" className="py-3 px-4 text-right bg-neutral-100/70">Allocate on This Invoice</th>
-                <th scope="col" className="py-3 px-4 text-right">Line Total (incl Tax)</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-neutral-200 font-sans">
+            <THead>
+              <TR className="hover:bg-transparent">
+                <TH scope="col">Dispatch Movement</TH>
+                <TH scope="col">Product Description</TH>
+                <TH scope="col" className="text-right">Dispatched</TH>
+                <TH scope="col" className="text-right">Already Billed</TH>
+                <TH scope="col" className="text-right">Available Billable</TH>
+                <TH scope="col" className="text-right">Unit Price</TH>
+                <TH scope="col" className="text-right px-4 bg-muted/70">Allocate on This Invoice</TH>
+                <TH scope="col" className="text-right px-4">Line Total (incl Tax)</TH>
+              </TR>
+            </THead>
+            <TBody>
               {billableMovements.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-8 text-center text-neutral-400">
+                  <TD colSpan={8} className="py-8 text-center text-muted-foreground">
                     No unbilled dispatch movements found for this customer. All movements are fully billed or no dispatches exist.
-                  </td>
+                  </TD>
                 </tr>
               ) : (
                 billableMovements.map((mov) => {
@@ -312,47 +339,47 @@ export const BillingView: React.FC<BillingViewProps> = ({
                     lineSubtotal,
                     businessSettings.default_gst_rate,
                     businessSettings.state_code,
-                    customer?.state_code || '24'
+                    customer ? getCustomerStateCode(customer) : '24'
                   );
                   const lineTotal = roundCurrency(lineSubtotal + tax.totalTax);
 
                   return (
-                    <tr key={mov.movementId} className="hover:bg-neutral-50/70">
-                      <td className="py-3 px-4 font-mono text-[11px]">
-                        <div className="font-semibold text-neutral-900">Challan #{mov.referenceId}</div>
-                        <div className="text-neutral-400">
+                    <TR key={mov.movementId}>
+                      <TD className="font-mono text-[11px]">
+                        <div className="font-semibold">Challan #{mov.referenceId}</div>
+                        <div className="text-muted-foreground">
                           {new Date(mov.movementDate).toLocaleDateString()} • #{mov.movementId}
                         </div>
-                      </td>
+                      </TD>
 
-                      <td className="py-3 px-3">
-                        <div className="font-semibold text-neutral-900">{mov.productName}</div>
-                        <div className="text-[11px] font-mono text-neutral-400">{mov.sku}</div>
-                      </td>
+                      <TD>
+                        <div className="font-semibold">{mov.productName}</div>
+                        <div className="text-[11px] font-mono text-muted-foreground">{mov.sku}</div>
+                      </TD>
 
-                      <td className="py-3 px-3 text-right font-mono text-neutral-700">
+                      <TD className="text-right font-mono">
                         {mov.dispatchedQuantity} {mov.unitCode}
-                      </td>
+                      </TD>
 
-                      <td className="py-3 px-3 text-right font-mono text-neutral-500">
+                      <TD className="text-right font-mono text-muted-foreground">
                         {mov.allocatedQuantity} {mov.unitCode}
-                      </td>
+                      </TD>
 
-                      <td className="py-3 px-3 text-right font-mono font-bold text-neutral-900">
+                      <TD className="text-right font-mono font-bold">
                         {mov.availableBillableQuantity} {mov.unitCode}
-                      </td>
+                      </TD>
 
-                      <td className="py-3 px-3 text-right font-mono">
+                      <TD className="text-right font-mono">
                         {formatINR(mov.applicablePrice)}
-                        <span className={`block text-[9px] font-bold ${mov.isCustomPrice ? 'text-emerald-700' : 'text-neutral-400'}`}>
+                        <span className={`block text-[9px] font-bold ${mov.isCustomPrice ? 'text-emerald-700 dark:text-emerald-300' : 'text-muted-foreground'}`}>
                           {mov.isCustomPrice ? 'AGREED' : 'BASE'}
                         </span>
-                      </td>
+                      </TD>
 
                       {/* Allocator Input */}
-                      <td className="py-3 px-4 text-right bg-neutral-50/40">
+                      <TD className="text-right bg-muted/40">
                         <div className="flex items-center justify-end gap-1.5">
-                          <input
+                          <Input
                             type="number"
                             min="0"
                             max={mov.availableBillableQuantity}
@@ -365,49 +392,49 @@ export const BillingView: React.FC<BillingViewProps> = ({
                                 Number(e.target.value)
                               )
                             }
-                            className="w-24 p-1.5 text-right font-mono border border-neutral-300 rounded font-semibold text-neutral-950 focus:ring-1 focus:ring-neutral-900 focus:outline-none bg-white"
+                            className="w-24 text-right font-mono font-semibold"
                           />
-                          <span className="text-[11px] font-mono text-neutral-500">{mov.unitCode}</span>
+                          <span className="text-[11px] font-mono text-muted-foreground">{mov.unitCode}</span>
                         </div>
                         {currentAlloc < mov.availableBillableQuantity && (
-                          <div className="text-[10px] font-mono text-amber-700 mt-0.5">
+                          <div className="text-[10px] font-mono text-amber-700 dark:text-amber-300 mt-0.5">
                             Remaining after: {roundCurrency(mov.availableBillableQuantity - currentAlloc)}
                           </div>
                         )}
-                      </td>
+                      </TD>
 
-                      <td className="py-3 px-4 text-right font-mono font-bold text-neutral-950">
+                      <TD className="text-right font-mono font-bold">
                         {formatINR(lineTotal)}
-                      </td>
-                    </tr>
+                      </TD>
+                    </TR>
                   );
                 })
               )}
-            </tbody>
-          </table>
+            </TBody>
+          </Table>
         </div>
-      </div>
+      </TableShell>
 
       {/* Invoice Totals & Finalization Section */}
-      <div className="grid grid-cols-1 md:grid-cols-12 gap-6 bg-white border border-neutral-200 p-6 rounded-lg shadow-2xs">
+      <Card className="grid grid-cols-1 md:grid-cols-12 gap-6 p-6 shadow-2xs">
         <div className="md:col-span-7 space-y-4">
           <div>
-            <label className="block text-xs font-semibold text-neutral-700 mb-1">
+            <Label className="mb-1 text-xs">
               Invoice Remarks / Site Reference
-            </label>
-            <textarea
+            </Label>
+            <Textarea
               rows={3}
               value={billingNotes}
               onChange={(e) => setBillingNotes(e.target.value)}
               placeholder="e.g. Consignment billing as per purchase order terms. Payment due in 15 days."
-              className="w-full p-2.5 text-xs border border-neutral-300 rounded focus:ring-1 focus:ring-neutral-900 focus:outline-none"
+              className="text-xs"
             />
           </div>
 
-          <div className="p-3 bg-neutral-50 border border-neutral-200 rounded text-xs space-y-1">
-            <div className="font-semibold text-neutral-700">Tax Type Applied:</div>
-            <div className="text-neutral-600 font-mono text-[11px]">
-              {customer?.state_code === businessSettings.state_code ? (
+          <div className="p-3 bg-muted border border-border rounded-md text-xs space-y-1">
+            <div className="font-semibold text-foreground">Tax Type Applied:</div>
+            <div className="text-muted-foreground font-mono text-[11px]">
+              {(customer ? getCustomerStateCode(customer) : businessSettings.state_code) === businessSettings.state_code ? (
                 <span>Intra-state Supply (Surat → {customer?.city}) • CGST ({halfGstRate}%) + SGST ({halfGstRate}%)</span>
               ) : (
                 <span>Inter-state Supply (Gujarat → {customer?.state}) • IGST ({businessSettings.default_gst_rate}%)</span>
@@ -417,58 +444,60 @@ export const BillingView: React.FC<BillingViewProps> = ({
         </div>
 
         <div className="md:col-span-5 space-y-3 text-xs">
-          <div className="flex justify-between py-1 border-b border-neutral-200">
-            <span className="text-neutral-600">Subtotal (Taxable):</span>
+          <div className="flex justify-between py-1 border-b border-border">
+            <span className="text-muted-foreground">Subtotal (Taxable):</span>
             <span className="font-mono font-medium">{formatINR(estimatedTotals.taxableAmount)}</span>
           </div>
 
           {estimatedTotals.cgst > 0 && (
-            <div className="flex justify-between py-1 border-b border-neutral-200">
-              <span className="text-neutral-600">CGST ({halfGstRate}%):</span>
+            <div className="flex justify-between py-1 border-b border-border">
+              <span className="text-muted-foreground">CGST ({halfGstRate}%):</span>
               <span className="font-mono">{formatINR(estimatedTotals.cgst)}</span>
             </div>
           )}
 
           {estimatedTotals.sgst > 0 && (
-            <div className="flex justify-between py-1 border-b border-neutral-200">
-              <span className="text-neutral-600">SGST ({halfGstRate}%):</span>
+            <div className="flex justify-between py-1 border-b border-border">
+              <span className="text-muted-foreground">SGST ({halfGstRate}%):</span>
               <span className="font-mono">{formatINR(estimatedTotals.sgst)}</span>
             </div>
           )}
 
           {estimatedTotals.igst > 0 && (
-            <div className="flex justify-between py-1 border-b border-neutral-200">
-              <span className="text-neutral-600">IGST ({businessSettings.default_gst_rate}%):</span>
+            <div className="flex justify-between py-1 border-b border-border">
+              <span className="text-muted-foreground">IGST ({businessSettings.default_gst_rate}%):</span>
               <span className="font-mono">{formatINR(estimatedTotals.igst)}</span>
             </div>
           )}
 
-          <div className="flex justify-between items-center py-1 border-b border-neutral-200">
-            <span className="text-neutral-600">Other / Freight Charges (₹):</span>
-            <input
+          <div className="flex justify-between items-center py-1 border-b border-border">
+            <span className="text-muted-foreground">Other / Freight Charges (₹):</span>
+            <Input
               type="number"
               step="0.01"
               value={otherCharges}
               onChange={(e) => setOtherCharges(Number(e.target.value))}
-              className="w-24 p-1 text-right font-mono border border-neutral-300 rounded bg-white"
+              className="w-24 text-right font-mono"
             />
           </div>
 
-          <div className="flex justify-between py-2 border-t-2 border-b-2 border-neutral-900 text-sm font-bold text-neutral-950">
+          <div className="flex justify-between py-2 border-t-2 border-b-2 border-foreground text-sm font-bold text-foreground">
             <span>Invoice Grand Total:</span>
             <span className="font-mono">{formatINR(estimatedTotals.grandTotal)}</span>
           </div>
 
-          <button
+          <Button
             onClick={handleGenerateInvoice}
-            disabled={activeItemsToBill.length === 0}
-            className="w-full py-2.5 px-4 bg-neutral-900 text-white font-semibold rounded hover:bg-neutral-800 disabled:opacity-40 transition-colors flex items-center justify-center gap-2 shadow-2xs"
+            disabled={activeItemsToBill.length === 0 || isCreating}
+            variant="primary"
+            size="md"
+            className="w-full py-2.5 shadow-2xs"
           >
             <CheckCircle className="w-4 h-4" />
-            <span>Generate &amp; Save Invoice</span>
-          </button>
+            <span>{isCreating ? 'Generating…' : 'Generate & Save Invoice'}</span>
+          </Button>
         </div>
-      </div>
+      </Card>
     </div>
   );
 };
