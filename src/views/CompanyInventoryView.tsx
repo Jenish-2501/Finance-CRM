@@ -10,13 +10,18 @@ import {
 import { Modal } from '../components/common/Modal';
 import { Badge } from '../components/common/Badge';
 import { Button, Card, CardHeader, PageHeader, SearchInput, TableShell, Table, THead, TBody, TR, TH, TD, Tabs, Input, Label, Select, Alert } from '../components/ui';
+import { useT } from '../i18n';
+import { convertQuantity, roundCurrency, toPcsDisplayQty } from '../utils/calculations';
 import { DeliveryChallanPrintView } from '../components/challan/DeliveryChallanPrintView';
 
 export const CompanyInventoryView: React.FC = () => {
+  const { t } = useT();
   const {
     products,
     uoms,
+    productUnits,
     getCurrentCompanyStock,
+    getPieceWeightMapping,
     inventoryMovements,
     createStockReceipt,
     createInventoryAdjustment,
@@ -35,8 +40,12 @@ export const CompanyInventoryView: React.FC = () => {
   const [receiptRef, setReceiptRef] = useState('');
   const [receiptDate, setReceiptDate] = useState(new Date().toISOString().split('T')[0]);
   const [receiptNotes, setReceiptNotes] = useState('');
+  // Receipt lines carry quantity only. Selling base price is set at product
+  // create / Adjust Price (Products screen) — never here, to avoid two
+  // conflicting price entries. unit_cost persists as 0 (DB column is NOT
+  // NULL; nothing reads it — see StockReceiptItem).
   const [receiptItems, setReceiptItems] = useState([
-    { productId: 'prod-1', unitId: 'uom-pcs', quantity: 500, unitCost: 85 }
+    { productId: 'prod-1', unitId: 'uom-pcs', quantity: 500 }
   ]);
 
   // Stock Adjustment Form
@@ -52,6 +61,30 @@ export const CompanyInventoryView: React.FC = () => {
     return p.product_name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q);
   });
 
+  // Piece-weight entry: mapped products (GRAM/KG primary + PCS mapping) are
+  // ALWAYS entered in PCS — inward, adjustment, dispatch, return. The store
+  // validates and ledgers in primary units either way.
+  const entryUnitFor = (productId: string): string => {
+    const p = products[productId];
+    if (!p) return 'uom-pcs';
+    return getPieceWeightMapping(productId)?.pcsUnitId ?? p.primary_unit_id;
+  };
+
+  // Derived weight preview for a mapped product line, or null.
+  const piecePreviewFor = (
+    productId: string,
+    quantity: number
+  ): { grams: number; kg: number } | null => {
+    if (!Number.isFinite(quantity) || quantity <= 0) return null;
+    const mapping = getPieceWeightMapping(productId);
+    if (!mapping) return null;
+    const pus = Object.values(productUnits).filter((pu) => pu.product_id === productId);
+    return {
+      grams: roundCurrency(quantity * mapping.gramsPerPiece),
+      kg: convertQuantity(quantity, mapping.pcsUnitId, mapping.kgUnitId, pus)
+    };
+  };
+
   const movementsList = Object.values(inventoryMovements)
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
@@ -60,14 +93,16 @@ export const CompanyInventoryView: React.FC = () => {
     setReceiptRef(`PO-${Math.floor(10000 + Math.random() * 90000)}`);
     setReceiptDate(new Date().toISOString().split('T')[0]);
     setReceiptNotes('');
-    setReceiptItems([{ productId: allProducts[0]?.id || 'prod-1', unitId: 'uom-pcs', quantity: 500, unitCost: 100 }]);
+    const firstId = allProducts[0]?.id || 'prod-1';
+    setReceiptItems([{ productId: firstId, unitId: entryUnitFor(firstId), quantity: 500 }]);
     setIsReceiptModalOpen(true);
   };
 
   const handleAddReceiptItem = () => {
+    const firstId = allProducts[0]?.id || 'prod-1';
     setReceiptItems([
       ...receiptItems,
-      { productId: allProducts[0]?.id || 'prod-1', unitId: 'uom-pcs', quantity: 100, unitCost: 50 }
+      { productId: firstId, unitId: entryUnitFor(firstId), quantity: 100 }
     ]);
   };
 
@@ -90,9 +125,11 @@ export const CompanyInventoryView: React.FC = () => {
       },
       receiptItems.map((item) => ({
         productId: item.productId,
-        unitId: item.unitId,
+        // Mapped products are always received in PCS, regardless of stale state.
+        unitId: entryUnitFor(item.productId),
         quantity: Number(item.quantity),
-        unitCost: Number(item.unitCost)
+        // No price entry here by design — selling price lives on Products.
+        unitCost: 0
       }))
     );
 
@@ -107,7 +144,7 @@ export const CompanyInventoryView: React.FC = () => {
 
     const result = createInventoryAdjustment({
       productId: adjustProductId,
-      unitId: prod.primary_unit_id,
+      unitId: entryUnitFor(adjustProductId),
       quantity: Number(adjustQuantity),
       movementType: adjustType,
       notes: adjustNotes || 'Physical inventory reconciliation'
@@ -138,17 +175,17 @@ export const CompanyInventoryView: React.FC = () => {
     <div className="space-y-6">
       {/* Header & Controls */}
       <PageHeader
-        title="Company Stock & Warehouse Ledger"
-        subtitle="Strict ledger-based inventory • Current stock calculated as Σ(Inward - Outward)"
+        title={t('companyInventory.title')}
+        subtitle={t('companyInventory.subtitle')}
         actions={
           <>
             <Button variant="secondary" size="sm" onClick={() => setIsAdjustModalOpen(true)}>
               <SlidersHorizontal className="w-3.5 h-3.5 text-muted-foreground" />
-              <span>Audit Adjustment</span>
+              <span>{t('companyInventory.adjust')}</span>
             </Button>
             <Button variant="primary" size="md" onClick={handleOpenReceipt}>
               <Plus className="w-3.5 h-3.5" />
-              <span>Receive Inward Stock</span>
+              <span>{t('companyInventory.receive')}</span>
             </Button>
           </>
         }
@@ -156,13 +193,13 @@ export const CompanyInventoryView: React.FC = () => {
 
       {/* Tabs */}
       <Tabs
-        ariaLabel="Company inventory views"
+        ariaLabel={t('companyInventory.tabsLabel')}
         activeId={activeTab}
         onSelect={(id) => setActiveTab(id as 'balances' | 'movements' | 'receipts')}
         tabs={[
-          { id: 'balances', label: 'Warehouse Stock Balances', count: allProducts.length },
-          { id: 'movements', label: 'Movement Ledger', count: movementsList.length },
-          { id: 'receipts', label: 'Stock Receipts', count: Object.keys(stockReceipts).length },
+          { id: 'balances', label: t('companyInventory.tabBalances'), count: allProducts.length },
+          { id: 'movements', label: t('companyInventory.tabMovements'), count: movementsList.length },
+          { id: 'receipts', label: t('companyInventory.tabReceipts'), count: Object.keys(stockReceipts).length },
         ]}
       />
 
@@ -173,26 +210,26 @@ export const CompanyInventoryView: React.FC = () => {
             <SearchInput
               icon={<Search className="w-3.5 h-3.5" />}
               type="text"
-              placeholder="Filter items..."
+              placeholder={t('companyInventory.filterPh')}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-56"
             />
             <span className="text-[11px] font-mono text-muted-foreground">
-              Rule 13: Calculated purely from movements (No stored current_stock field)
+              {t('companyInventory.rule13')}
             </span>
           </CardHeader>
 
           <div className="overflow-x-auto">
             <Table className="text-left border-collapse">
-            <caption className="sr-only">Warehouse stock balances by product</caption>
+            <caption className="sr-only">{t('companyInventory.balancesCaption')}</caption>
             <THead>
               <TR className="hover:bg-transparent">
-                <TH scope="col">Product Name</TH>
-                  <TH scope="col">SKU</TH>
-                  <TH scope="col">Base UOM</TH>
-                  <TH scope="col" className="text-right">Available Warehouse Stock</TH>
-                  <TH scope="col" className="text-center">Stock Status</TH>
+                <TH scope="col">{t('companyInventory.thProduct')}</TH>
+                  <TH scope="col">{t('companyInventory.thSku')}</TH>
+                  <TH scope="col">{t('companyInventory.thUom')}</TH>
+                  <TH scope="col" className="text-right">{t('companyInventory.thStock')}</TH>
+                  <TH scope="col" className="text-center">{t('companyInventory.thStatus')}</TH>
               </TR>
             </THead>
             <TBody>
@@ -200,6 +237,13 @@ export const CompanyInventoryView: React.FC = () => {
                   const stock = getCurrentCompanyStock(prod.id);
                   const uom = uoms[prod.primary_unit_id];
                   const isLow = stock < 50;
+                  // Piece-mapped products lead with PCS (weight as reference).
+                  const piecePcs = (() => {
+                    const mapping = getPieceWeightMapping(prod.id);
+                    if (!mapping) return null;
+                    const pus = Object.values(productUnits).filter((pu) => pu.product_id === prod.id);
+                    return toPcsDisplayQty(mapping, stock, prod.primary_unit_id, pus);
+                  })();
 
                   return (
                     <TR key={prod.id}>
@@ -211,14 +255,27 @@ export const CompanyInventoryView: React.FC = () => {
                         <Badge variant="neutral">{uom?.code || 'PCS'}</Badge>
                       </TD>
                       <TD className="text-right font-mono font-bold text-sm">
-                        <span className={stock > 0 ? 'text-foreground' : 'text-destructive'}>
-                          {stock.toLocaleString()}
-                        </span>{' '}
-                        <span className="text-xs font-normal text-muted-foreground">{uom?.code}</span>
+                        {piecePcs !== null ? (
+                          <>
+                            <span className={stock > 0 ? 'text-foreground' : 'text-destructive'}>
+                              {piecePcs.toLocaleString()} PCS
+                            </span>{' '}
+                            <span className="text-[11px] font-normal text-muted-foreground">
+                              (≈ {stock.toLocaleString()} {uom?.code})
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <span className={stock > 0 ? 'text-foreground' : 'text-destructive'}>
+                              {stock.toLocaleString()}
+                            </span>{' '}
+                            <span className="text-xs font-normal text-muted-foreground">{uom?.code}</span>
+                          </>
+                        )}
                       </TD>
                       <TD className="text-center">
                         <Badge variant={stock > 0 ? (isLow ? 'warning' : 'success') : 'danger'}>
-                          {stock > 0 ? (isLow ? 'LOW STOCK' : 'IN STOCK') : 'DEPLETED'}
+                          {stock > 0 ? (isLow ? t('companyInventory.lowStock') : t('companyInventory.inStock')) : t('companyInventory.depleted')}
                         </Badge>
                       </TD>
                     </TR>
@@ -235,15 +292,15 @@ export const CompanyInventoryView: React.FC = () => {
         <TableShell>
           <div className="overflow-x-auto">
             <Table className="text-left border-collapse">
-              <caption className="sr-only">Company inventory movement ledger</caption>
+              <caption className="sr-only">{t('companyInventory.movementsCaption')}</caption>
               <THead>
                 <TR className="hover:bg-transparent">
-                  <TH scope="col">Date</TH>
-                  <TH scope="col">Product</TH>
-                  <TH scope="col">Movement Type</TH>
-                  <TH scope="col" className="text-right">Quantity</TH>
-                  <TH scope="col">Reference / Notes</TH>
-                  <TH scope="col">Audit By</TH>
+                  <TH scope="col">{t('companyInventory.thDate')}</TH>
+                  <TH scope="col">{t('companyInventory.thProduct')}</TH>
+                  <TH scope="col">{t('companyInventory.thMovement')}</TH>
+                  <TH scope="col" className="text-right">{t('companyInventory.thQty')}</TH>
+                  <TH scope="col">{t('companyInventory.thRef')}</TH>
+                  <TH scope="col">{t('companyInventory.thAuditBy')}</TH>
                 </TR>
               </THead>
               <TBody>
@@ -262,7 +319,7 @@ export const CompanyInventoryView: React.FC = () => {
                       </TD>
 
                       <TD className="font-sans font-semibold">
-                        {prod?.product_name || 'Item'}
+                        {prod?.product_name || t('dashboard.itemFallback')}
                         <div className="text-[10px] font-mono text-muted-foreground">{prod?.sku}</div>
                       </TD>
 
@@ -283,7 +340,7 @@ export const CompanyInventoryView: React.FC = () => {
                       <TD className="font-sans text-muted-foreground">
                         <div>{mov.notes}</div>
                         <div className="flex items-center gap-2 mt-0.5">
-                          <span className="text-[10px] font-mono text-muted-foreground">Ref: #{mov.reference_id}</span>
+                          <span className="text-[10px] font-mono text-muted-foreground">{t('companyInventory.refLabel', { ref: mov.reference_id })}</span>
                           {mov.movement_type === 'CUSTOMER_DISPATCH' && (
                             <Button
                               variant="primary"
@@ -292,11 +349,11 @@ export const CompanyInventoryView: React.FC = () => {
                                 const cim = customerInventoryMovements[mov.reference_id];
                                 setSelectedChallanRef(cim?.reference_id || mov.reference_id);
                               }}
-                              title="Print / View Delivery Challan"
+                              title={t('companyInventory.challanTitle')}
                               className="px-2 py-0.5 text-[10px] shadow-2xs"
                             >
                               <Printer className="w-3 h-3" />
-                              <span>Challan</span>
+                              <span>{t('companyInventory.challan')}</span>
                             </Button>
                           )}
                         </div>
@@ -322,9 +379,9 @@ export const CompanyInventoryView: React.FC = () => {
                   <div className="flex items-center gap-2 font-mono">
                     <span className="font-bold text-foreground text-sm">{sr.receipt_number}</span>
                     <Badge variant="success">{sr.status}</Badge>
-                    <span className="text-muted-foreground">Ref: {sr.reference_number || 'N/A'}</span>
+                    <span className="text-muted-foreground">{t('companyInventory.receiptRef', { ref: sr.reference_number || t('common.na') })}</span>
                   </div>
-                  <div className="text-foreground font-medium mt-1">Supplier: {sr.supplier_name}</div>
+                  <div className="text-foreground font-medium mt-1">{t('companyInventory.supplierLine', { name: sr.supplier_name })}</div>
                   <div className="text-muted-foreground text-[11px] mt-0.5">{sr.notes}</div>
                 </div>
 
@@ -341,26 +398,26 @@ export const CompanyInventoryView: React.FC = () => {
       <Modal
         isOpen={isReceiptModalOpen}
         onClose={() => setIsReceiptModalOpen(false)}
-        title="Receive Company Stock (Inward)"
-        subtitle="Generates stock receipt and logs STOCK_IN movements"
+        title={t('companyInventory.receiptTitle')}
+        subtitle={t('companyInventory.receiptSubtitle')}
         maxWidth="2xl"
       >
         <form onSubmit={handleSaveReceipt} className="space-y-4 text-xs">
           <div className="grid grid-cols-3 gap-3">
             <div className="col-span-2">
-              <Label className="mb-1">Supplier / Vendor Name *</Label>
+              <Label className="mb-1">{t('companyInventory.supplier')}</Label>
               <Input
                 type="text"
                 required
                 value={receiptSupplier}
                 onChange={(e) => setReceiptSupplier(e.target.value)}
                 className="w-full"
-                placeholder="e.g. Gujarat Steel & Alloys Corporation"
+                placeholder={t('companyInventory.supplierPh')}
               />
             </div>
 
             <div>
-              <Label className="mb-1">Receipt Date</Label>
+              <Label className="mb-1">{t('companyInventory.receiptDate')}</Label>
               <Input
                 type="date"
                 required
@@ -371,7 +428,7 @@ export const CompanyInventoryView: React.FC = () => {
             </div>
 
             <div>
-              <Label className="mb-1">PO / Delivery Challan Ref</Label>
+              <Label className="mb-1">{t('companyInventory.poRef')}</Label>
               <Input
                 type="text"
                 value={receiptRef}
@@ -381,13 +438,13 @@ export const CompanyInventoryView: React.FC = () => {
             </div>
 
             <div className="col-span-2">
-              <Label className="mb-1">Notes / Remarks</Label>
+              <Label className="mb-1">{t('companyInventory.notes')}</Label>
               <Input
                 type="text"
                 value={receiptNotes}
                 onChange={(e) => setReceiptNotes(e.target.value)}
                 className="w-full"
-                placeholder="Consignment inspection comments"
+                placeholder={t('companyInventory.notesPh')}
               />
             </div>
           </div>
@@ -396,10 +453,10 @@ export const CompanyInventoryView: React.FC = () => {
           <div className="border-t border-border pt-3">
             <div className="flex justify-between items-center mb-2">
               <span className="font-semibold text-foreground uppercase tracking-wide text-[11px]">
-                Inward Stock Items
+                {t('companyInventory.itemsTitle')}
               </span>
               <Button type="button" variant="secondary" size="sm" onClick={handleAddReceiptItem} className="text-[11px] px-2 py-1">
-                + Add Another Item
+                {t('companyInventory.addItem')}
               </Button>
             </div>
 
@@ -409,15 +466,14 @@ export const CompanyInventoryView: React.FC = () => {
                   key={idx}
                   className="grid grid-cols-12 gap-2 items-center p-2.5 bg-muted border border-border rounded-md"
                 >
-                  <div className="col-span-5">
-                    <label className="block text-[10px] text-muted-foreground mb-0.5">Product</label>
+                  <div className="col-span-6">
+                    <label className="block text-[10px] text-muted-foreground mb-0.5">{t('companyInventory.itemProduct')}</label>
                     <Select
                       value={item.productId}
                       onChange={(e) => {
                         const updated = [...receiptItems];
                         updated[idx].productId = e.target.value;
-                        const p = products[e.target.value];
-                        if (p) updated[idx].unitId = p.primary_unit_id;
+                        updated[idx].unitId = entryUnitFor(e.target.value);
                         setReceiptItems(updated);
                       }}
                       className="w-full text-xs"
@@ -430,8 +486,14 @@ export const CompanyInventoryView: React.FC = () => {
                     </Select>
                   </div>
 
-                  <div className="col-span-3">
-                    <label className="block text-[10px] text-muted-foreground mb-0.5">Quantity</label>
+                  <div className="col-span-5">
+                    <label className="block text-[10px] text-muted-foreground mb-0.5">
+                      {t('companyInventory.itemQty')}
+                      {(() => {
+                        const m = getPieceWeightMapping(item.productId);
+                        return m ? ` (${uoms[m.pcsUnitId]?.code ?? 'PCS'})` : '';
+                      })()}
+                    </label>
                     <Input
                       type="number"
                       min="1"
@@ -444,21 +506,14 @@ export const CompanyInventoryView: React.FC = () => {
                       }}
                       className="w-full font-mono"
                     />
-                  </div>
-
-                  <div className="col-span-3">
-                    <label className="block text-[10px] text-muted-foreground mb-0.5">Unit Cost (₹)</label>
-                    <Input
-                      type="number"
-                      step="0.01"
-                      value={item.unitCost}
-                      onChange={(e) => {
-                        const updated = [...receiptItems];
-                        updated[idx].unitCost = Number(e.target.value);
-                        setReceiptItems(updated);
-                      }}
-                      className="w-full font-mono"
-                    />
+                    {(() => {
+                      const pv = piecePreviewFor(item.productId, Number(item.quantity));
+                      return pv ? (
+                        <div className="text-[10px] font-mono font-semibold text-emerald-800 dark:text-emerald-300 mt-0.5">
+                          {t('customerInventory.pieceWeightPreview', { pcs: Number(item.quantity), grams: pv.grams, kg: pv.kg })}
+                        </div>
+                      ) : null;
+                    })()}
                   </div>
 
                   <div className="col-span-1 pt-4 text-center">
@@ -468,7 +523,7 @@ export const CompanyInventoryView: React.FC = () => {
                         variant="ghost"
                         size="sm"
                         onClick={() => handleRemoveReceiptItem(idx)}
-                        title="Remove line"
+                        title={t('companyInventory.removeLine')}
                       >
                         ×
                       </Button>
@@ -481,10 +536,10 @@ export const CompanyInventoryView: React.FC = () => {
 
           <div className="flex justify-end gap-2 pt-3 border-t border-border">
             <Button type="button" variant="secondary" size="sm" onClick={() => setIsReceiptModalOpen(false)}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button type="submit" variant="primary" size="sm">
-              Confirm Receipt
+              {t('companyInventory.confirmReceipt')}
             </Button>
           </div>
         </form>
@@ -494,8 +549,8 @@ export const CompanyInventoryView: React.FC = () => {
       <Modal
         isOpen={isAdjustModalOpen}
         onClose={() => setIsAdjustModalOpen(false)}
-        title="Physical Inventory Adjustment"
-        subtitle="Compensating ledger movement for audit corrections"
+        title={t('companyInventory.adjustTitle')}
+        subtitle={t('companyInventory.adjustSubtitle')}
         maxWidth="md"
       >
         <form onSubmit={handleSaveAdjust} className="space-y-4 text-xs">
@@ -506,7 +561,7 @@ export const CompanyInventoryView: React.FC = () => {
           )}
 
           <div>
-            <Label className="mb-1">Product</Label>
+            <Label className="mb-1">{t('companyInventory.adjProduct')}</Label>
             <Select
               value={adjustProductId}
               onChange={(e) => setAdjustProductId(e.target.value)}
@@ -521,7 +576,7 @@ export const CompanyInventoryView: React.FC = () => {
           </div>
 
           <div>
-            <Label className="mb-1">Adjustment Direction</Label>
+            <Label className="mb-1">{t('companyInventory.adjDirection')}</Label>
             <div className="grid grid-cols-2 gap-2">
               <label
                 className={`p-2 border rounded text-center cursor-pointer ${
@@ -538,7 +593,7 @@ export const CompanyInventoryView: React.FC = () => {
                   onChange={() => setAdjustType('ADJUSTMENT_IN')}
                   className="hidden"
                 />
-                + Adjustment In (Surplus)
+                {t('companyInventory.adjIn')}
               </label>
 
               <label
@@ -556,13 +611,19 @@ export const CompanyInventoryView: React.FC = () => {
                   onChange={() => setAdjustType('ADJUSTMENT_OUT')}
                   className="hidden"
                 />
-                - Adjustment Out (Deficit)
+                {t('companyInventory.adjOut')}
               </label>
             </div>
           </div>
 
           <div>
-            <Label className="mb-1">Quantity</Label>
+            <Label className="mb-1">
+              {t('companyInventory.adjQty')}
+              {(() => {
+                const m = getPieceWeightMapping(adjustProductId);
+                return m ? ` (${uoms[m.pcsUnitId]?.code ?? 'PCS'})` : '';
+              })()}
+            </Label>
             <Input
               type="number"
               min="1"
@@ -571,26 +632,34 @@ export const CompanyInventoryView: React.FC = () => {
               onChange={(e) => setAdjustQuantity(Number(e.target.value))}
               className="w-full font-mono"
             />
+            {(() => {
+              const pv = piecePreviewFor(adjustProductId, Number(adjustQuantity));
+              return pv ? (
+                <div className="text-[10px] font-mono font-semibold text-emerald-800 dark:text-emerald-300 mt-0.5">
+                  {t('customerInventory.pieceWeightPreview', { pcs: Number(adjustQuantity), grams: pv.grams, kg: pv.kg })}
+                </div>
+              ) : null;
+            })()}
           </div>
 
           <div>
-            <Label className="mb-1">Audit Reconciliation Reason</Label>
+            <Label className="mb-1">{t('companyInventory.adjReason')}</Label>
             <Input
               type="text"
               required
               value={adjustNotes}
               onChange={(e) => setAdjustNotes(e.target.value)}
               className="w-full"
-              placeholder="e.g. Physical inventory variance found during quarterly audit"
+              placeholder={t('companyInventory.adjReasonPh')}
             />
           </div>
 
           <div className="flex justify-end gap-2 pt-3 border-t border-border">
             <Button type="button" variant="secondary" size="sm" onClick={() => setIsAdjustModalOpen(false)}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button type="submit" variant="primary" size="sm">
-              Post Adjustment
+              {t('companyInventory.postAdjust')}
             </Button>
           </div>
         </form>
@@ -600,8 +669,8 @@ export const CompanyInventoryView: React.FC = () => {
         <Modal
           isOpen={Boolean(selectedChallanRef)}
           onClose={() => setSelectedChallanRef(null)}
-          title={`Delivery Challan #${selectedChallanRef}`}
-          subtitle="Rule 55 CGST / SGST Delivery Challan for customer goods dispatch"
+          title={t('companyInventory.challanModalTitle', { ref: selectedChallanRef })}
+          subtitle={t('companyInventory.challanModalSubtitle')}
           maxWidth="full"
         >
           <DeliveryChallanPrintView

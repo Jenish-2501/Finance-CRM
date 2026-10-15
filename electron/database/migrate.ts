@@ -13,12 +13,22 @@ import * as m0010 from './migrations/0010_remove_hsn.js';
 import * as m0011 from './migrations/0011_remove_customer_email_state_code.js';
 import * as m0012 from './migrations/0012_remove_secondary_packaging.js';
 import * as m0013 from './migrations/0013_retire_nonstandard_units.js';
-import * as m0014 from './migrations/0014_remove_dispatch_logistics.js';
+import * as m0014 from './migrations/0014_language_overrides.js';
+import * as m0015 from './migrations/0015_remove_dispatch_logistics.js';
+import * as m0016 from './migrations/0016_customer_gujarati_name.js';
+import * as m0017 from './migrations/0017_business_logo.js';
 
 interface Migration {
   version: number;
   name: string;
   sql: string;
+  // Optional schema-adaptive step. Most migrations are plain SQL, but DDL that
+  // must converge databases coming from DIFFERENT released chains (e.g. a
+  // version renumber that re-runs an already-applied DROP COLUMN) cannot be
+  // expressed as static SQL — SQLite has no DROP COLUMN IF EXISTS. When
+  // present, the runner calls migrate(db) INSTEAD of exec(sql), inside the
+  // same per-migration transaction.
+  migrate?: (db: Database.Database) => void;
 }
 
 // Ordered. Append new migrations here; never reorder or edit applied ones.
@@ -37,6 +47,9 @@ const MIGRATIONS: Migration[] = [
   { version: m0012.version, name: m0012.name, sql: m0012.sql },
   { version: m0013.version, name: m0013.name, sql: m0013.sql },
   { version: m0014.version, name: m0014.name, sql: m0014.sql },
+  { version: m0015.version, name: m0015.name, sql: m0015.sql, migrate: m0015.migrate },
+  { version: m0016.version, name: m0016.name, sql: m0016.sql },
+  { version: m0017.version, name: m0017.name, sql: m0017.sql },
 ];
 
 const MIGRATIONS_TABLE_SQL = `
@@ -110,7 +123,11 @@ export function runMigrations(db: Database.Database): { applied: number[] } {
   for (const m of MIGRATIONS) {
     if (applied.has(m.version)) continue;
     const tx = db.transaction(() => {
-      db.exec(m.sql);
+      if (m.migrate) {
+        m.migrate(db);
+      } else {
+        db.exec(m.sql);
+      }
       db.prepare('INSERT INTO _migrations (version, name, applied_at) VALUES (?, ?, ?)').run(
         m.version,
         m.name,

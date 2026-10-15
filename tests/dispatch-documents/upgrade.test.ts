@@ -76,8 +76,8 @@ async function buildLegacyV8(dir: string): Promise<void> {
   legacy.close();
 }
 
-describe('v8 → v14 upgrade adoption', () => {
-  it('applies v9–v14: headers collapse multi-row challans, ids backfilled, counters default, indexes live', () => {
+describe('v8 → v17 upgrade adoption', () => {
+  it('applies v9–v17: headers collapse multi-row challans, ids backfilled, counters default, indexes live', () => {
     const dir = tempDir('acculedger-doc-upgrade-');
     return buildLegacyV8(dir).then(() => {
       delete process.env.VITE_DEV_SERVER_URL;
@@ -85,7 +85,7 @@ describe('v8 → v14 upgrade adoption', () => {
       const db = getSqlite();
       expect(db.prepare('SELECT version FROM _migrations ORDER BY version').all()).toEqual([
         { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 },
-        { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 }, { version: 14 },
+        { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 }, { version: 14 }, { version: 15 }, { version: 16 }, { version: 17 },
       ]);
 
       const headers = db.prepare('SELECT customer_id, document_type, document_number FROM dispatch_documents ORDER BY customer_id, document_type').all();
@@ -107,7 +107,7 @@ describe('v8 → v14 upgrade adoption', () => {
       const idx = db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='dispatch_documents_customer_type_number_unique'").get();
       expect(idx).toBeDefined();
 
-      // v14: logistics columns gone, everything else byte-identical.
+      // v15: logistics columns gone, everything else byte-identical.
       const cols = (db.prepare("SELECT name FROM pragma_table_info('customer_inventory_movements')").all() as Array<{ name: string }>).map((r) => r.name);
       for (const dropped of ['vehicle_number', 'transporter_name', 'eway_bill_number', 'dispatch_purpose', 'notes']) {
         expect(cols).not.toContain(dropped);

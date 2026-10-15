@@ -82,12 +82,16 @@ process.on('message', (msg: unknown) => {
   }
 });
 
-function showFatalError(message: string): void {
-  logger.error('app.database_init_failed', {});
+function showFatalError(message: string, err: unknown): void {
+  // Never swallow the cause: the message names the failing table/column and
+  // is safe for logs and the dialog (SQLite errors carry schema details,
+  // never business PII — passcodes and money values are never in DDL).
+  const cause = err instanceof Error ? err.message : String(err);
+  logger.error('app.database_init_failed', { cause: cause.slice(0, 500) });
   try {
     dialog.showErrorBox(
       'Database initialization failed',
-      `${message}\n\nThe application will now close. Your data in the app data folder was not modified beyond the failed startup.`
+      `${message}\n\nReason: ${cause}\n\nThe application will now close. Your data in the app data folder was not modified beyond the failed startup.`
     );
   } catch {
     // dialog unavailable (e.g. very early failure) — fall through to quit
@@ -280,7 +284,7 @@ if (smokeIndex !== -1) {
       initDatabase(app.getPath('userData'));
       dbReady = true;
     } catch (err) {
-      showFatalError('The local database could not be prepared.');
+      showFatalError('The local database could not be prepared.', err);
       app.quit();
       return;
     }

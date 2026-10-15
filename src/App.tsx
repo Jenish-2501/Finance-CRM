@@ -14,10 +14,12 @@ import { PaymentsView } from './views/PaymentsView';
 import { CustomerLedgerView } from './views/CustomerLedgerView';
 import { ReportsView } from './views/ReportsView';
 import { SettingsView } from './views/SettingsView';
+import { LanguageSettingsView } from './views/settings/LanguageSettingsView';
 import { AuditActivityView } from './views/AuditActivityView';
 import { AppSettingsView } from './views/AppSettingsView';
 import { Modal } from './components/common/Modal';
 import { AppShell, ThemeProvider } from './components/ui';
+import { LanguageProvider } from './i18n';
 import { InvoicePrintView } from './components/invoice/InvoicePrintView';
 import { LoginView } from './views/LoginView';
 
@@ -99,13 +101,16 @@ export default function App() {
   if (!isAuthenticated) {
     return (
       <ThemeProvider>
-        <LoginView onLogin={handleLogin} />
+        <LanguageProvider>
+          <LoginView onLogin={handleLogin} />
+        </LanguageProvider>
       </ThemeProvider>
     );
   }
 
   return (
     <ThemeProvider>
+      <LanguageProvider>
     <AppShell sidebar={<Sidebar currentTab={currentTab} onSelectTab={(tab) => setCurrentTab(tab)} />} header={<Header onLogout={handleLogout} />}>
             {currentTab === 'dashboard' && (
               <DashboardView
@@ -162,6 +167,8 @@ export default function App() {
 
             {currentTab === 'settings' && <SettingsView />}
 
+            {currentTab === 'language-settings' && <LanguageSettingsView />}
+
             {currentTab === 'activity' && <AuditActivityView />}
 
             {currentTab === 'pricing' && <CustomerPricingView />}
@@ -194,6 +201,7 @@ export default function App() {
           />
         </Modal>
       )}
+      </LanguageProvider>
     </ThemeProvider>
   );
 }

@@ -1,4 +1,6 @@
 import React from 'react';
+import { useT } from '../../i18n';
+import { useAccountingStore } from '../../store/accountingStore';
 import {
   LayoutDashboard,
   Users,
@@ -13,7 +15,8 @@ import {
   History,
   FileCheck,
   Tag,
-  DatabaseBackup
+  DatabaseBackup,
+  Languages
 } from 'lucide-react';
 
 export type NavigationTab =
@@ -28,6 +31,7 @@ export type NavigationTab =
   | 'customer-inventory'
   | 'reports'
   | 'settings'
+  | 'language-settings'
   | 'activity'
   | 'pricing'
   | 'app-settings';
@@ -38,70 +42,73 @@ interface SidebarProps {
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab }) => {
+  const { t } = useT();
+  const { businessSettings } = useAccountingStore();
   const navSections = [
     {
-      title: 'CORE',
+      title: t('nav.sections.core'),
       items: [
-        { id: 'dashboard' as NavigationTab, label: 'Dashboard', icon: LayoutDashboard }
+        { id: 'dashboard' as NavigationTab, label: t('nav.dashboard'), icon: LayoutDashboard }
       ]
     },
     {
-      title: 'SALES & BILLING',
+      title: t('nav.sections.sales'),
       items: [
-        { id: 'billing' as NavigationTab, label: 'Billing Wizard', icon: FileCheck },
-        { id: 'pricing' as NavigationTab, label: 'Customer Pricing', icon: Tag },
-        { id: 'invoices' as NavigationTab, label: 'Invoices', icon: FileText },
-        { id: 'payments' as NavigationTab, label: 'Payments', icon: CreditCard },
-        { id: 'ledger' as NavigationTab, label: 'Customer Ledger', icon: BookOpen }
+        { id: 'billing' as NavigationTab, label: t('nav.billing'), icon: FileCheck },
+        { id: 'pricing' as NavigationTab, label: t('nav.pricing'), icon: Tag },
+        { id: 'invoices' as NavigationTab, label: t('nav.invoices'), icon: FileText },
+        { id: 'payments' as NavigationTab, label: t('nav.payments'), icon: CreditCard },
+        { id: 'ledger' as NavigationTab, label: t('nav.ledger'), icon: BookOpen }
       ]
     },
     {
-      title: 'MASTER DATA',
+      title: t('nav.sections.master'),
       items: [
-        { id: 'customers' as NavigationTab, label: 'Customers', icon: Users },
-        { id: 'products' as NavigationTab, label: 'Products & UOM', icon: Package }
+        { id: 'customers' as NavigationTab, label: t('nav.customers'), icon: Users },
+        { id: 'products' as NavigationTab, label: t('nav.products'), icon: Package }
       ]
     },
     {
-      title: 'INVENTORY LEDGER',
+      title: t('nav.sections.inventory'),
       items: [
-        { id: 'company-inventory' as NavigationTab, label: 'Company Stock', icon: Layers },
-        { id: 'customer-inventory' as NavigationTab, label: 'Customer Holding', icon: Truck }
+        { id: 'company-inventory' as NavigationTab, label: t('nav.companyInventory'), icon: Layers },
+        { id: 'customer-inventory' as NavigationTab, label: t('nav.customerInventory'), icon: Truck }
       ]
     },
     {
-      title: 'ANALYTICS & COMPLIANCE',
+      title: t('nav.sections.analytics'),
       items: [
-        { id: 'reports' as NavigationTab, label: 'Financial Reports', icon: BarChart3 }
+        { id: 'reports' as NavigationTab, label: t('nav.reports'), icon: BarChart3 }
       ]
     },
     {
-      title: 'ADMINISTRATION',
+      title: t('nav.sections.admin'),
       items: [
-        { id: 'settings' as NavigationTab, label: 'Business Settings', icon: Settings },
-        { id: 'app-settings' as NavigationTab, label: 'App Settings', icon: DatabaseBackup },
-        { id: 'activity' as NavigationTab, label: 'Audit Trail', icon: History }
+        { id: 'settings' as NavigationTab, label: t('nav.settings'), icon: Settings },
+        { id: 'language-settings' as NavigationTab, label: t('nav.languageSettings'), icon: Languages },
+        { id: 'app-settings' as NavigationTab, label: t('nav.appSettings'), icon: DatabaseBackup },
+        { id: 'activity' as NavigationTab, label: t('nav.activity'), icon: History }
       ]
     }
   ];
 
   return (
     <aside className="w-64 bg-sidebar text-sidebar-foreground flex flex-col shrink-0 border-r border-sidebar-border select-none no-print">
-      {/* Brand logo & product title */}
+      {/* Brand logo & product title (business identity, not the static app name) */}
       <div className="h-16 flex items-center px-6 border-b border-sidebar-border gap-3">
         <div className="w-7 h-7 bg-sidebar-primary text-sidebar-primary-foreground font-bold flex items-center justify-center rounded-md text-xs font-mono">
           ₹
         </div>
-        <div>
-          <div className="text-sm font-bold text-sidebar-foreground tracking-wide">AccuLedger</div>
-          <div className="text-[10px] text-muted-foreground font-mono tracking-tight uppercase">
-            Enterprise ERP Prototype
+        <div className="min-w-0">
+          <div className="text-sm font-bold text-sidebar-foreground tracking-wide truncate" title={businessSettings.business_name}>{businessSettings.business_name}</div>
+          <div className="text-[10px] text-muted-foreground font-mono tracking-tight">
+            {businessSettings.gst_number}
           </div>
         </div>
       </div>
 
       {/* Nav items */}
-      <nav aria-label="Primary" className="flex-1 py-4 px-3 overflow-y-auto space-y-6">
+      <nav aria-label={t('nav.primary')} className="flex-1 py-4 px-3 overflow-y-auto space-y-6">
         {navSections.map((sec) => (
           <div key={sec.title}>
             <div className="text-[10px] font-mono tracking-wider font-semibold text-muted-foreground uppercase px-3 mb-1.5">
@@ -134,8 +141,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab }) => 
 
       {/* Footnote / Architecture info */}
       <div className="p-4 border-t border-sidebar-border text-[11px] text-muted-foreground font-mono">
-        <div>Zustand Relational Store</div>
-        <div className="text-[10px] opacity-80">PostgreSQL Schema Contract</div>
+        <div>{t('shell.storeLine1')}</div>
+        <div className="text-[10px] opacity-80">{t('shell.storeLine2')}</div>
       </div>
     </aside>
   );

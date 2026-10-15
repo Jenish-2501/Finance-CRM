@@ -85,6 +85,21 @@ declare global {
           message?: string;
         }>;
       };
+      language: {
+        list: () => Promise<Record<string, string>>;
+        save: (overrides: Record<string, string>) => Promise<{
+          ok: boolean;
+          saved?: number;
+          error?: string;
+          message?: string;
+        }>;
+        reset: (keyOrAll: string | { key: string } | { all: true }) => Promise<{
+          ok: boolean;
+          saved?: number;
+          error?: string;
+          message?: string;
+        }>;
+      };
       customers: {
         upsert: (data: unknown) => Promise<boolean>;
         delete: (id: string) => Promise<boolean>;

@@ -5,9 +5,11 @@ import { formatINR, roundCurrency } from '../utils/calculations';
 import { Modal } from '../components/common/Modal';
 import { Badge } from '../components/common/Badge';
 import { Button, Card, CardFooter, Input, Label, PageHeader, TableShell, Table, THead, TBody, TR, TH, TD } from '../components/ui';
+import { useT } from '../i18n';
 import { History, Save, CheckCircle2, AlertTriangle } from 'lucide-react';
 
 export const CustomerPricingView: React.FC = () => {
+  const { t } = useT();
   const {
     customers,
     products,
@@ -88,13 +90,13 @@ export const CustomerPricingView: React.FC = () => {
     } else {
       const price = Number(raw);
       if (!Number.isFinite(price)) {
-        setRowMsg((prev) => ({ ...prev, [row.key]: { kind: 'error', text: 'Enter a valid amount.' } }));
+        setRowMsg((prev) => ({ ...prev, [row.key]: { kind: 'error', text: t('pricing.errAmount') } }));
         return;
       }
       result = setCustomerPrice({ customerId: effectiveCustomerId, productId: row.productId, unitId: row.unitId, price });
     }
     if (!result.success) {
-      setRowMsg((prev) => ({ ...prev, [row.key]: { kind: 'error', text: result.error || 'Could not save.' } }));
+      setRowMsg((prev) => ({ ...prev, [row.key]: { kind: 'error', text: result.error || t('pricing.errSave') } }));
       return;
     }
     setDrafts((prev) => {
@@ -102,24 +104,24 @@ export const CustomerPricingView: React.FC = () => {
       delete next[row.key];
       return next;
     });
-    setRowMsg((prev) => ({ ...prev, [row.key]: { kind: 'success', text: raw === '' ? 'Base price applies.' : 'Agreed price saved.' } }));
+    setRowMsg((prev) => ({ ...prev, [row.key]: { kind: 'success', text: raw === '' ? t('pricing.baseApplies') : t('pricing.agreedSaved') } }));
   };
 
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Customer Pricing"
-        subtitle="Agreed selling price per customer • base price applies when empty • applies immediately to billing & challans"
+        title={t('pricing.title')}
+        subtitle={t('pricing.subtitle')}
         actions={
           <Button variant="secondary" size="sm" onClick={() => setHistoryOpen(true)} disabled={!customer}>
             <History className="w-3.5 h-3.5" />
-            <span>Price History{customer ? ` — ${customer.customer_number}` : ''}</span>
+            <span>{t('pricing.history')}{customer ? ` — ${customer.customer_number}` : ''}</span>
           </Button>
         }
       />
 
       <Card className="p-4 text-xs shadow-2xs">
-        <Label className="mb-1">Select Customer</Label>
+        <Label className="mb-1">{t('pricing.selectCustomer')}</Label>
         <div className="max-w-md">
           <CustomerPicker
             value={effectiveCustomerId}
@@ -136,27 +138,27 @@ export const CustomerPricingView: React.FC = () => {
 
       <TableShell>
         <div className="p-4 border-b border-border bg-muted/70 text-xs font-bold uppercase tracking-wider text-foreground">
-          Agreed Prices ({rows.length} product-units)
+          {t('pricing.agreedTitle', { count: rows.length })}
         </div>
         <div className="overflow-x-auto">
           <Table className="text-left border-collapse">
-            <caption className="sr-only">Agreed customer prices by product</caption>
+            <caption className="sr-only">{t('pricing.caption')}</caption>
             <THead>
               <TR className="hover:bg-transparent">
-                <TH scope="col">Product</TH>
-                <TH scope="col">Unit</TH>
-                <TH scope="col" className="text-right">Base Price</TH>
-                <TH scope="col" className="text-right">Agreed Price (₹)</TH>
-                <TH scope="col" className="text-right">Margin</TH>
-                <TH scope="col" className="text-center">Applies</TH>
-                <TH scope="col" className="text-right px-4">Action</TH>
+                <TH scope="col">{t('pricing.thProduct')}</TH>
+                <TH scope="col">{t('pricing.thUnit')}</TH>
+                <TH scope="col" className="text-right">{t('pricing.thBase')}</TH>
+                <TH scope="col" className="text-right">{t('pricing.thAgreed')}</TH>
+                <TH scope="col" className="text-right">{t('pricing.thMargin')}</TH>
+                <TH scope="col" className="text-center">{t('pricing.thApplies')}</TH>
+                <TH scope="col" className="text-right px-4">{t('pricing.thAction')}</TH>
               </TR>
             </THead>
             <TBody>
               {rows.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="py-8 text-center text-muted-foreground">
-                    No active products with billing units.
+                    {t('pricing.empty')}
                   </td>
                 </tr>
               ) : (
@@ -187,7 +189,7 @@ export const CustomerPricingView: React.FC = () => {
                               handleSave(row);
                             }
                           }}
-                          placeholder={row.basePrice ? String(row.basePrice) : 'Base'}
+                          placeholder={row.basePrice ? String(row.basePrice) : t('pricing.basePh')}
                           className="w-28 font-mono text-right ml-auto block"
                         />
                         {msg && (
@@ -209,13 +211,13 @@ export const CustomerPricingView: React.FC = () => {
                       </TD>
                       <TD className="text-center">
                         <Badge variant={row.agreedPrice !== null ? 'info' : 'neutral'}>
-                          {row.agreedPrice !== null ? 'CUSTOM' : 'BASE'}
+                          {row.agreedPrice !== null ? t('pricing.custom') : t('pricing.base')}
                         </Badge>
                       </TD>
                       <TD className="text-right">
                         <Button variant="primary" size="sm" onClick={() => handleSave(row)} className="text-[11px] px-2.5 py-1">
                           <Save className="w-3 h-3" />
-                          <span>Save</span>
+                          <span>{t('pricing.save')}</span>
                         </Button>
                       </TD>
                     </TR>
@@ -226,29 +228,29 @@ export const CustomerPricingView: React.FC = () => {
           </Table>
         </div>
         <CardFooter className="text-[11px] text-muted-foreground">
-          Empty agreed price = base price applies. Clearing a saved price removes the override (logged in history).
+          {t('pricing.footer')}
         </CardFooter>
       </TableShell>
 
       <Modal
         isOpen={historyOpen}
         onClose={() => setHistoryOpen(false)}
-        title={`Price History — ${customer ? formatCustomerLabel(customer) : ''}`}
-        subtitle="Every agreed-price change for this customer, newest first. History is append-only."
+        title={t('pricing.historyTitle', { customer: customer ? formatCustomerLabel(customer) : '' })}
+        subtitle={t('pricing.historySubtitle')}
         maxWidth="2xl"
       >
         {history.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No price changes recorded for this customer yet.</p>
+          <p className="text-xs text-muted-foreground">{t('pricing.historyEmpty')}</p>
         ) : (
           <div className="overflow-x-auto">
             <Table className="text-left border-collapse">
               <THead>
                 <TR className="hover:bg-transparent">
-                  <TH>Changed At</TH>
-                  <TH>Product</TH>
-                  <TH>Unit</TH>
-                  <TH className="text-right">Old Price</TH>
-                  <TH className="text-right">New Price</TH>
+                  <TH>{t('pricing.hChanged')}</TH>
+                  <TH>{t('pricing.hProduct')}</TH>
+                  <TH>{t('pricing.hUnit')}</TH>
+                  <TH className="text-right">{t('pricing.hOld')}</TH>
+                  <TH className="text-right">{t('pricing.hNew')}</TH>
                 </TR>
               </THead>
               <TBody>
@@ -259,8 +261,8 @@ export const CustomerPricingView: React.FC = () => {
                       <TD className="font-mono text-[11px]">{new Date(h.changed_at).toLocaleString()}</TD>
                       <TD>{prod?.product_name || h.product_id}</TD>
                       <TD className="font-mono">{uoms[h.unit_id]?.code || h.unit_id}</TD>
-                      <TD className="text-right font-mono">{h.old_price === null ? <span className="text-muted-foreground">— first —</span> : formatINR(h.old_price)}</TD>
-                      <TD className="text-right font-mono">{h.new_price === null ? <span className="text-muted-foreground">— removed —</span> : formatINR(h.new_price)}</TD>
+                      <TD className="text-right font-mono">{h.old_price === null ? <span className="text-muted-foreground">{t('pricing.firstPrice')}</span> : formatINR(h.old_price)}</TD>
+                      <TD className="text-right font-mono">{h.new_price === null ? <span className="text-muted-foreground">{t('pricing.removedPrice')}</span> : formatINR(h.new_price)}</TD>
                     </TR>
                   );
                 })}

@@ -65,7 +65,7 @@ async function buildLegacyV6(dir: string): Promise<void> {
 }
 
 describe('v6 → v13 upgrade adoption', () => {
-  it('applies v7 through v13: fy backfilled, counters default, legacy number untouched, no series fabricated', () => {
+  it('applies v7 through v17: fy backfilled, counters default, legacy number untouched, no series fabricated', () => {
     const dir = tempDir('acculedger-fy-upgrade-');
     return buildLegacyV6(dir).then(() => {
       delete process.env.VITE_DEV_SERVER_URL;
@@ -75,7 +75,9 @@ describe('v6 → v13 upgrade adoption', () => {
       expect(vers).toEqual([
         { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 },
         { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 },
-        { version: 11 }, { version: 12 }, { version: 13 }, { version: 14 },
+        { version: 11 }, { version: 12 }, { version: 13 }, { version: 14 }, { version: 15 },
+        { version: 16 },
+        { version: 17 },
       ]);
 
       const inv = db.prepare('SELECT invoice_number, fy FROM invoices WHERE id=?').get('inv-old') as {

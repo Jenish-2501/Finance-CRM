@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAccountingStore } from '../store/accountingStore';
-import { isHoldingsRowFullyBilled, getMovementBillingStatus, roundCurrency } from '../utils/calculations';
+import { getMovementBillingStatus, roundCurrency, convertQuantity, toDisplayWeight } from '../utils/calculations';
 import {
   Truck,
   RotateCcw,
@@ -16,6 +16,42 @@ import { Badge } from '../components/common/Badge';
 import { Button, Card, CardHeader, PageHeader, TableShell, Table, THead, TBody, TR, TH, TD, Tabs, Alert, Input, Label, Select } from '../components/ui';
 import { CustomerPicker, firstCustomerId } from '../components/common/CustomerPicker';
 import { DeliveryChallanPrintView } from '../components/challan/DeliveryChallanPrintView';
+import { useT } from '../i18n';
+import type { CustomerInventoryMovement } from '../types/database';
+
+export interface ChallanOption {
+  referenceId: string;
+  movementDate: string;
+  totalQuantity: number;
+  unitId: string;
+}
+
+// Dispatch challans for one customer + product, newest first, multi-row
+// challans merged into a single option (same reference = one document).
+export function groupDispatchChallans(
+  movements: CustomerInventoryMovement[],
+  customerId: string,
+  productId: string
+): ChallanOption[] {
+  const byRef = new Map<string, ChallanOption>();
+  for (const m of movements) {
+    if (m.customer_id !== customerId || m.product_id !== productId) continue;
+    if (m.movement_type !== 'DISPATCH' && m.movement_type !== 'ADJUSTMENT_IN') continue;
+    const existing = byRef.get(m.reference_id);
+    if (existing) {
+      existing.totalQuantity = roundCurrency(existing.totalQuantity + m.quantity);
+      if (m.movement_date < existing.movementDate) existing.movementDate = m.movement_date;
+    } else {
+      byRef.set(m.reference_id, {
+        referenceId: m.reference_id,
+        movementDate: m.movement_date,
+        totalQuantity: m.quantity,
+        unitId: m.unit_id,
+      });
+    }
+  }
+  return [...byRef.values()].sort((a, b) => b.movementDate.localeCompare(a.movementDate));
+}
 
 interface CustomerInventoryViewProps {
   onOpenBillingForCustomer?: (customerId: string) => void;
@@ -24,18 +60,22 @@ interface CustomerInventoryViewProps {
 export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
   onOpenBillingForCustomer
 }) => {
+  const { t } = useT();
   const {
     customers,
     products,
     uoms,
+    productUnits,
     customerInventoryMovements,
+    dispatchDocuments,
     invoices,
     invoiceAllocations,
     dispatchBatchInventoryToCustomer,
     createCustomerReturn,
     suggestNextDocumentNumber,
     getCustomerInventorySummary,
-    getCurrentCompanyStock
+    getCurrentCompanyStock,
+    getPieceWeightMapping
   } = useAccountingStore();
 
   const [activeTab, setActiveTab] = useState<'holdings' | 'movements'>('holdings');
@@ -43,6 +83,20 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
   const [isDispatchModalOpen, setIsDispatchModalOpen] = useState(false);
   const [isReturnModalOpen, setIsReturnModalOpen] = useState(false);
   const [selectedChallanRef, setSelectedChallanRef] = useState<string | null>(null);
+  const [printDirection, setPrintDirection] = useState<'dispatch' | 'return'>('dispatch');
+
+  const openPrint = (referenceId: string, direction: 'dispatch' | 'return') => {
+    setPrintDirection(direction);
+    setSelectedChallanRef(referenceId);
+  };
+  const closePrint = () => {
+    setSelectedChallanRef(null);
+    setPrintDirection('dispatch');
+  };
+
+  // Holdings table pagination (reset when switching customer site).
+  const [holdingsPage, setHoldingsPage] = useState(1);
+  const [holdingsPageSize, setHoldingsPageSize] = useState(10);
   const [operationError, setOperationError] = useState('');
 
   // Dispatch Form State
@@ -73,9 +127,255 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
   const effectiveDispatchCustomerId = firstCustomerId(customers, dispatchForm.customerId);
   const effectiveReturnCustomerId = firstCustomerId(customers, returnForm.customerId);
 
+  useEffect(() => {
+    setHoldingsPage(1);
+  }, [effectiveCustomerId]);
+
   const allProducts = Object.values(products);
 
-  const selectedCustomerSummary = getCustomerInventorySummary(effectiveCustomerId);
+  // Piece-weight entry: mapped products (GRAM primary + PCS mapping) are ALWAYS
+  // entered in PCS — the counter never types weight. Weight derives via
+  // convertQuantity; the store validates stock in primary units either way.
+  const entryUnitFor = (productId: string): string => {
+    const p = products[productId];
+    if (!p) return 'uom-pcs';
+    return getPieceWeightMapping(productId)?.pcsUnitId ?? p.primary_unit_id;
+  };
+
+  // Derived weight preview for a mapped product line, or null.
+  // Grams are exact (pieces × grams-per-piece); KG goes through the
+  // 2-decimal conversion, matching billing exactly.
+  const piecePreviewFor = (
+    productId: string,
+    quantity: number
+  ): { grams: number; kg: number } | null => {
+    if (!Number.isFinite(quantity) || quantity <= 0) return null;
+    const mapping = getPieceWeightMapping(productId);
+    const p = products[productId];
+    if (!mapping || !p) return null;
+    const pus = Object.values(productUnits).filter((pu) => pu.product_id === productId);
+    return {
+      grams: roundCurrency(quantity * mapping.gramsPerPiece),
+      kg: convertQuantity(quantity, mapping.pcsUnitId, mapping.kgUnitId, pus)
+    };
+  };
+
+  // Challan-wise holdings: one card per dispatch challan (document header,
+  // newest first; legacy rows without a header group by challan reference).
+  interface ChallanCardLine {
+    movementId: string;
+    referenceId: string;
+    productId: string;
+    unitId: string;
+    productName: string;
+    sku: string;
+    quantity: number;
+    unitCode: string;
+    grams: number | null;
+    allocated: number;
+    remaining: number;
+    billedGrams: number | null;
+    remainingGrams: number | null;
+    status: 'BILLED' | 'PARTIAL' | 'UNBILLED';
+  }
+  interface ChallanCard {
+    key: string;
+    number: string;
+    date: string;
+    lines: ChallanCardLine[];
+    totalQty: number;
+    totalWeightGrams: number;
+    status: 'BILLED' | 'PARTIAL' | 'UNBILLED';
+  }
+  const allocForMovement = (movementId: string): number =>
+    roundCurrency(
+      Object.values(invoiceAllocations)
+        .filter(
+          (a) =>
+            a.customer_inventory_movement_id === movementId &&
+            invoices[a.invoice_id]?.status !== 'CANCELLED'
+        )
+        .reduce((sum, a) => sum + a.allocated_quantity, 0)
+    );
+  const challanCards: ChallanCard[] = (() => {
+    const toLine = (m: (typeof dispatchMovs)[number]): ChallanCardLine => {
+      const prod = products[m.product_id];
+      const mapping = getPieceWeightMapping(m.product_id);
+      const gpp =
+        mapping && m.unit_id === mapping.pcsUnitId ? mapping.gramsPerPiece : null;
+      const grams = gpp !== null ? roundCurrency(m.quantity * gpp) : null;
+      const allocated = allocForMovement(m.id);
+      const remaining = Math.max(0, roundCurrency(m.quantity - allocated));
+      return {
+        movementId: m.id,
+        referenceId: m.reference_id,
+        productId: m.product_id,
+        unitId: m.unit_id,
+        productName: prod?.product_name || t('dashboard.itemFallback'),
+        sku: prod?.sku || '',
+        quantity: m.quantity,
+        unitCode: uoms[m.unit_id]?.code || 'PCS',
+        grams,
+        allocated,
+        remaining,
+        billedGrams: gpp !== null ? roundCurrency(allocated * gpp) : null,
+        remainingGrams: gpp !== null ? roundCurrency(remaining * gpp) : null,
+        status: getMovementBillingStatus(m.quantity, allocated)
+      };
+    };
+    const finishGroup = (key: string, number: string, date: string, lines: ChallanCardLine[]): ChallanCard => {
+      let totalQty = 0;
+      let totalWeightGrams = 0;
+      let anyAlloc = false;
+      let allBilled = lines.length > 0;
+      for (const l of lines) {
+        totalQty = roundCurrency(totalQty + l.quantity);
+        if (l.grams !== null) totalWeightGrams = roundCurrency(totalWeightGrams + l.grams);
+        if (l.allocated > 0) anyAlloc = true;
+        if (l.status !== 'BILLED') allBilled = false;
+      }
+      return {
+        key,
+        number,
+        date,
+        lines,
+        totalQty,
+        totalWeightGrams,
+        status: allBilled ? 'BILLED' : anyAlloc ? 'PARTIAL' : 'UNBILLED'
+      };
+    };
+    const dispatchMovs = Object.values(customerInventoryMovements)
+      .filter((m) => m.customer_id === effectiveCustomerId && m.movement_type === 'DISPATCH');
+    const groups: ChallanCard[] = Object.values(dispatchDocuments)
+      .filter((h) => h.customer_id === effectiveCustomerId && h.document_type === 'DISPATCH')
+      .sort((a, b) => new Date(b.document_date).getTime() - new Date(a.document_date).getTime())
+      .map((h) => {
+        const lines = dispatchMovs
+          .filter((m) => m.document_id === h.id)
+          .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+          .map(toLine);
+        return finishGroup(h.id, h.document_number, h.document_date, lines);
+      })
+      .filter((g) => g.lines.length > 0);
+    const orphaned = dispatchMovs.filter((m) => !m.document_id);
+    const byRef: Record<string, typeof dispatchMovs> = {};
+    for (const m of orphaned) {
+      if (!byRef[m.reference_id]) byRef[m.reference_id] = [];
+      byRef[m.reference_id].push(m);
+    }
+    for (const [ref, ms] of Object.entries(byRef)) {
+      ms.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+      groups.push(finishGroup(`legacy-${ref}`, ref, ms[0].movement_date, ms.map(toLine)));
+    }
+    groups.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    return groups;
+  })();
+
+  // Return slips: one card per RETURN document (document header, newest
+  // first; legacy rows without a header group by return reference). Returns
+  // carry no billing state — they only reduce what the customer holds.
+  interface ReturnCardLine {
+    movementId: string;
+    referenceId: string;
+    productName: string;
+    sku: string;
+    quantity: number;
+    unitCode: string;
+    grams: number | null;
+  }
+  interface ReturnCard {
+    key: string;
+    number: string;
+    date: string;
+    lines: ReturnCardLine[];
+    totalQty: number;
+    totalWeightGrams: number;
+  }
+  const returnCards: ReturnCard[] = (() => {
+    const toLine = (m: {
+      id: string;
+      reference_id: string;
+      product_id: string;
+      unit_id: string;
+      quantity: number;
+    }): ReturnCardLine => {
+      const prod = products[m.product_id];
+      const mapping = getPieceWeightMapping(m.product_id);
+      const grams =
+        mapping && m.unit_id === mapping.pcsUnitId
+          ? roundCurrency(m.quantity * mapping.gramsPerPiece)
+          : null;
+      return {
+        movementId: m.id,
+        referenceId: m.reference_id,
+        productName: prod?.product_name || t('dashboard.itemFallback'),
+        sku: prod?.sku || '',
+        quantity: m.quantity,
+        unitCode: uoms[m.unit_id]?.code || 'PCS',
+        grams
+      };
+    };
+    const finishGroup = (key: string, number: string, date: string, lines: ReturnCardLine[]): ReturnCard => {
+      let totalQty = 0;
+      let totalWeightGrams = 0;
+      for (const l of lines) {
+        totalQty = roundCurrency(totalQty + l.quantity);
+        if (l.grams !== null) totalWeightGrams = roundCurrency(totalWeightGrams + l.grams);
+      }
+      return { key, number, date, lines, totalQty, totalWeightGrams };
+    };
+    const returnMovs = Object.values(customerInventoryMovements).filter(
+      (m) => m.customer_id === effectiveCustomerId && m.movement_type === 'RETURN'
+    );
+    const groups: ReturnCard[] = Object.values(dispatchDocuments)
+      .filter((h) => h.customer_id === effectiveCustomerId && h.document_type === 'RETURN')
+      .sort((a, b) => new Date(b.document_date).getTime() - new Date(a.document_date).getTime())
+      .map((h) => {
+        const lines = returnMovs
+          .filter((m) => m.document_id === h.id)
+          .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+          .map(toLine);
+        return finishGroup(h.id, h.document_number, h.document_date, lines);
+      })
+      .filter((g) => g.lines.length > 0);
+    const orphaned = returnMovs.filter((m) => !m.document_id);
+    const byRef: Record<string, typeof returnMovs> = {};
+    for (const m of orphaned) {
+      if (!byRef[m.reference_id]) byRef[m.reference_id] = [];
+      byRef[m.reference_id].push(m);
+    }
+    for (const [ref, ms] of Object.entries(byRef)) {
+      ms.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+      groups.push(finishGroup(`legacy-${ref}`, ref, ms[0].movement_date, ms.map(toLine)));
+    }
+    groups.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    return groups;
+  })();
+
+  // One interleaved list: dispatch challans + return slips, newest first.
+  const movementCards: Array<
+    { kind: 'dispatch'; card: ChallanCard } | { kind: 'return'; card: ReturnCard }
+  > = [
+    ...challanCards.map((card) => ({ kind: 'dispatch' as const, card })),
+    ...returnCards.map((card) => ({ kind: 'return' as const, card })),
+  ].sort((a, b) => new Date(b.card.date).getTime() - new Date(a.card.date).getTime());
+
+  // Per-product unbilled balances (same source as holdings/billing): Return
+  // buttons are offered only where unbilled stock actually exists, so the UI
+  // never offers what the store will refuse.
+  const holdingsPageCount = Math.max(1, Math.ceil(movementCards.length / holdingsPageSize));
+  const holdingsSafePage = Math.min(Math.max(1, holdingsPage), holdingsPageCount);
+  const pagedDocs = movementCards.slice(
+    (holdingsSafePage - 1) * holdingsPageSize,
+    holdingsSafePage * holdingsPageSize
+  );
+
+  const unbilledByProduct: Record<string, number> = {};
+  for (const s of getCustomerInventorySummary(effectiveCustomerId)) {
+    unbilledByProduct[s.productId] = s.unbilledQuantity;
+  }
+  const hasAnyUnbilled = Object.values(unbilledByProduct).some((q) => q > 0);
+
   const allCustomerMovements = Object.values(customerInventoryMovements)
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
@@ -83,13 +383,14 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
     setOperationError('');
     const targetProd = pId ? products[pId] : allProducts[0];
     const targetCustomer = cId || effectiveCustomerId;
+    const targetProdId = targetProd?.id || 'prod-1';
     setDispatchForm({
       customerId: targetCustomer,
       referenceId: suggestNextDocumentNumber(targetCustomer, 'DISPATCH'),
       items: [
         {
-          productId: targetProd?.id || 'prod-1',
-          unitId: targetProd?.primary_unit_id || 'uom-pcs',
+          productId: targetProdId,
+          unitId: entryUnitFor(targetProdId),
           quantity: 50
         }
       ]
@@ -99,13 +400,14 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
 
   const handleAddDispatchItem = () => {
     const defaultProd = allProducts[0];
+    const defaultProdId = defaultProd?.id || 'prod-1';
     setDispatchForm({
       ...dispatchForm,
       items: [
         ...dispatchForm.items,
         {
-          productId: defaultProd?.id || 'prod-1',
-          unitId: defaultProd?.primary_unit_id || 'uom-pcs',
+          productId: defaultProdId,
+          unitId: entryUnitFor(defaultProdId),
           quantity: 20
         }
       ]
@@ -123,10 +425,11 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
   const handleOpenReturn = (cId?: string, pId?: string) => {
     setOperationError('');
     const targetCustomer = cId || effectiveCustomerId;
+    const targetProdId = pId || allProducts[0]?.id || 'prod-1';
     setReturnForm({
       customerId: targetCustomer,
-      productId: pId || allProducts[0]?.id || 'prod-1',
-      unitId: products[pId || allProducts[0]?.id || 'prod-1']?.primary_unit_id || 'uom-pcs',
+      productId: targetProdId,
+      unitId: entryUnitFor(targetProdId),
       quantity: 10,
       referenceId: suggestNextDocumentNumber(targetCustomer, 'RETURN')
     });
@@ -138,7 +441,7 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
     setOperationError('');
 
     if (dispatchForm.items.length === 0) {
-      setOperationError('Please add at least one product item to dispatch.');
+      setOperationError(t('customerInventory.errNoItems'));
       return;
     }
 
@@ -147,7 +450,8 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
       referenceId: dispatchForm.referenceId.trim(),
       items: dispatchForm.items.map((it) => ({
         productId: it.productId,
-        unitId: it.unitId,
+        // Mapped products always move in PCS, regardless of stale form state.
+        unitId: entryUnitFor(it.productId),
         quantity: Number(it.quantity)
       }))
     });
@@ -158,7 +462,7 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
       setIsDispatchModalOpen(false);
       // Immediately open generated Delivery Challan for print & preview
       if (res.referenceId) {
-        setSelectedChallanRef(res.referenceId);
+        openPrint(res.referenceId, 'dispatch');
       }
     }
   };
@@ -170,7 +474,7 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
     const res = createCustomerReturn({
       customerId: effectiveReturnCustomerId,
       productId: returnForm.productId,
-      unitId: returnForm.unitId,
+      unitId: entryUnitFor(returnForm.productId),
       quantity: Number(returnForm.quantity),
       referenceId: returnForm.referenceId
     });
@@ -186,30 +490,18 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
     <div className="space-y-6">
       {/* Header & Controls */}
       <PageHeader
-        title="Customer Inventory & Consignments"
-        subtitle="Atomic stock dispatch/return • Explicit unbilled vs. holding reconciliation"
-        actions={
-          <>
-            <Button variant="secondary" size="sm" onClick={() => handleOpenReturn()}>
-              <RotateCcw className="w-3.5 h-3.5 text-muted-foreground" />
-              <span>Record Customer Return</span>
-            </Button>
-            <Button variant="primary" size="md" onClick={() => handleOpenDispatch()}>
-              <Truck className="w-3.5 h-3.5" />
-              <span>Dispatch to Customer</span>
-            </Button>
-          </>
-        }
+        title={t('customerInventory.title')}
+        subtitle={t('customerInventory.subtitle')}
       />
 
       {/* Tabs */}
       <Tabs
-        ariaLabel="Customer inventory views"
+        ariaLabel={t('customerInventory.tabsLabel')}
         activeId={activeTab}
         onSelect={(id) => setActiveTab(id as 'holdings' | 'movements')}
         tabs={[
-          { id: 'holdings', label: 'Customer Holdings Reconciliation' },
-          { id: 'movements', label: 'Customer Movement Ledger', count: allCustomerMovements.length },
+          { id: 'holdings', label: t('customerInventory.tabHoldings') },
+          { id: 'movements', label: t('customerInventory.tabMovements'), count: allCustomerMovements.length },
         ]}
       />
 
@@ -221,7 +513,7 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
             <div className="flex items-center gap-3 w-full sm:w-auto">
               <Building className="w-4 h-4 text-muted-foreground" />
               <label className="text-xs font-semibold text-foreground whitespace-nowrap">
-                Select Client Site:
+                {t('customerInventory.selectSite')}
               </label>
               <div className="min-w-[260px]">
                 <CustomerPicker
@@ -234,13 +526,23 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
 
             <div className="flex items-center gap-2">
               <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => handleOpenReturn(effectiveCustomerId)}
+                disabled={!hasAnyUnbilled}
+                title={hasAnyUnbilled ? t('customerInventory.returnTitle') : t('customerInventory.billedTitle')}
+              >
+                <RotateCcw className="w-3.5 h-3.5 text-muted-foreground" />
+                <span>{t('customerInventory.recordReturn')}</span>
+              </Button>
+              <Button
                 variant="primary"
                 size="sm"
                 onClick={() => handleOpenDispatch(effectiveCustomerId)}
-                title="Dispatch stock to this client with Delivery Challan"
+                title={t('customerInventory.newDispatchTitle')}
               >
                 <Truck className="w-3.5 h-3.5" />
-                <span>New Dispatch</span>
+                <span>{t('customerInventory.newDispatch')}</span>
               </Button>
               {onOpenBillingForCustomer && (
                 <Button
@@ -249,7 +551,7 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
                   onClick={() => onOpenBillingForCustomer(effectiveCustomerId)}
                 >
                   <FileCheck className="w-3.5 h-3.5" />
-                  <span>Generate Invoice for Unbilled</span>
+                  <span>{t('customerInventory.genInvoice')}</span>
                 </Button>
               )}
             </div>
@@ -259,101 +561,253 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
           <TableShell>
             <CardHeader>
               <div className="font-semibold text-foreground text-xs">
-                Inventory Held at {customers[effectiveCustomerId]?.customer_name}
-              </div>
-              <div className="font-mono text-muted-foreground text-[11px]">
-                Rule 56: Current Inventory ≠ Unbilled Inventory (Derived via allocations)
+                {t('customerInventory.heldAt', { name: customers[effectiveCustomerId]?.customer_name ?? '' })}
               </div>
             </CardHeader>
 
             <div className="overflow-x-auto">
               <Table className="text-left border-collapse">
-              <caption className="sr-only">Customer consignment holdings reconciliation</caption>
-              <THead>
-                <TR className="hover:bg-transparent">
-                  <TH scope="col">Product Name</TH>
-                    <TH scope="col">SKU</TH>
-                    <TH scope="col" className="text-right">Dispatched In</TH>
-                    <TH scope="col" className="text-right">Returned Out</TH>
-                    <TH scope="col" className="text-right">Physically Held</TH>
-                    <TH scope="col" className="text-right">Allocated / Billed</TH>
-                    <TH scope="col" className="text-right">Remaining Billable</TH>
-                    <TH scope="col" className="text-right px-4">Quick Actions</TH>
-                </TR>
-              </THead>
-              <TBody>
-                  {selectedCustomerSummary.length === 0 ? (
+                <caption className="sr-only">{t('customerInventory.holdingsCaption')}</caption>
+                <THead>
+                  <TR className="hover:bg-transparent">
+                    <TH scope="col">{t('customerInventory.thDocNo')}</TH>
+                    <TH scope="col">{t('customerInventory.thDocType')}</TH>
+                    <TH scope="col">{t('customerInventory.thProducts')}</TH>
+                    <TH scope="col" className="text-right">{t('customerInventory.thBilledCol')}</TH>
+                    <TH scope="col" className="text-right">{t('customerInventory.thUnbilledCol')}</TH>
+                    <TH scope="col">{t('customerInventory.thStatus')}</TH>
+                    <TH scope="col" className="text-right px-4">{t('customerInventory.thQuick')}</TH>
+                  </TR>
+                </THead>
+                <TBody>
+                  {movementCards.length === 0 ? (
                     <tr>
-                      <TD colSpan={8} className="py-8 text-center text-muted-foreground">
-                        No inventory consignments or movements recorded for this customer yet.
+                      <TD colSpan={7} className="py-8 text-center text-muted-foreground">
+                        {t('customerInventory.empty')}
                       </TD>
                     </tr>
                   ) : (
-                    selectedCustomerSummary.map((item) => (
-                      <TR key={item.productId}>
-                        <TD className="font-semibold">
-                          {item.productName}
-                        </TD>
-                        <TD className="font-mono text-muted-foreground text-[11px]">
-                          {item.sku}
-                        </TD>
-                        <TD className="text-right font-mono">
-                          {item.totalReceived} {item.unitCode}
-                        </TD>
-                        <TD className="text-right font-mono">
-                          {item.totalReturned} {item.unitCode}
-                        </TD>
-                        <TD className="text-right font-mono font-bold">
-                          {item.currentBalance} {item.unitCode}
-                        </TD>
-                        <TD className="text-right font-mono text-emerald-800 dark:text-emerald-300">
-                          {item.billedQuantity} {item.unitCode}
-                        </TD>
-                        <TD className="text-right font-mono font-bold text-amber-900 dark:text-amber-200">
-                          {item.unbilledQuantity} {item.unitCode}
-                        </TD>
-                        <TD className="text-right">
-                          <div className="flex justify-end items-center gap-1.5">
-                            {isHoldingsRowFullyBilled(item.billedQuantity, item.unbilledQuantity) ? (
-                              <span
-                                className="inline-flex items-center gap-1 text-[11px] font-mono font-bold text-emerald-800 dark:text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-1 rounded-md"
-                                title="Fully billed — returns are not allowed on billed stock"
-                              >
-                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-                                <span>Billed</span>
-                              </span>
-                            ) : (
-                              <>
-                                <Button
-                                  variant="secondary"
-                                  size="sm"
-                                  onClick={() => handleOpenReturn(effectiveCustomerId, item.productId)}
-                                  title="Process return from this client site"
-                                  className="text-[11px] px-2 py-1"
-                                >
-                                  Return
-                                </Button>
-                                {onOpenBillingForCustomer && item.unbilledQuantity > 0 && (
-                                  <Button
-                                    variant="success"
-                                    size="sm"
-                                    onClick={() => onOpenBillingForCustomer(effectiveCustomerId)}
-                                    title="Open billing allocation"
-                                    className="text-[11px] px-2 py-1"
-                                  >
-                                    Bill
-                                  </Button>
-                                )}
-                              </>
-                            )}
+                    pagedDocs.map((mc) => {
+                  if (mc.kind === 'return') {
+                    const rc = mc.card;
+                    return (
+                      <TR key={rc.key}>
+                        <TD>
+                          <div className="font-mono font-bold text-foreground">
+                            {t('customerInventory.returnSlipNo', { ref: rc.number })}
+                          </div>
+                          <div className="text-[11px] font-mono text-muted-foreground">
+                            {new Date(rc.date).toLocaleDateString()}
                           </div>
                         </TD>
+                        <TD>
+                          <Badge variant="neutral">{t('customerInventory.returnSlip')}</Badge>
+                        </TD>
+                        <TD>
+                          {rc.lines.map((l) => {
+                            const w = l.grams !== null ? toDisplayWeight(l.grams) : null;
+                            return (
+                              <div key={l.movementId} className="py-0.5">
+                                <span className="font-semibold">{l.productName}</span>{' '}
+                                <span className="font-mono text-[11px]">
+                                  {l.quantity} {l.unitCode}
+                                </span>
+                                {w && (
+                                  <span className="font-mono text-[11px] text-muted-foreground">
+                                    {' '}(= {w.qty} {w.unit})
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </TD>
+                        <TD className="text-center text-muted-foreground">—</TD>
+                        <TD className="text-center text-muted-foreground">—</TD>
+                        <TD className="text-center text-muted-foreground">—</TD>
+                        <TD className="text-right">
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            onClick={() => openPrint(rc.lines[0]?.referenceId || rc.number, 'return')}
+                            title={t('customerInventory.printChallanTitle')}
+                            className="text-[11px] shadow-2xs"
+                          >
+                            <Printer className="w-3.5 h-3.5 text-primary-foreground" />
+                            <span>{t('customerInventory.printChallan')}</span>
+                          </Button>
+                        </TD>
                       </TR>
-                    ))
-                  )}
+                    );
+                  }
+                  const ch = mc.card;
+                  const firstReturnable = ch.lines.find(
+                    (l) => l.status !== 'BILLED' && (unbilledByProduct[l.productId] ?? 0) > 0
+                  );
+                  return (
+                    <TR key={ch.key}>
+                      <TD>
+                        <div className="font-mono font-bold text-foreground">
+                          {t('printBar.challanNo', { ref: ch.number })}
+                        </div>
+                        <div className="text-[11px] font-mono text-muted-foreground">
+                          {new Date(ch.date).toLocaleDateString()}
+                        </div>
+                      </TD>
+                      <TD>
+                        <Badge variant="info">{t('customerInventory.docDelivery')}</Badge>
+                      </TD>
+                      <TD>
+                        {ch.lines.map((l) => {
+                          const w = l.grams !== null ? toDisplayWeight(l.grams) : null;
+                          return (
+                            <div key={l.movementId} className="py-0.5">
+                              <span className="font-semibold">{l.productName}</span>{' '}
+                              <span className="font-mono text-[11px]">
+                                {l.quantity} {l.unitCode}
+                              </span>
+                              {w && (
+                                <span className="font-mono text-[11px] text-muted-foreground">
+                                  {' '}(= {w.qty} {w.unit})
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </TD>
+                      <TD className="text-right font-mono">
+                        {ch.lines.map((l) => {
+                          const bw =
+                            l.billedGrams !== null && l.billedGrams > 0
+                              ? toDisplayWeight(l.billedGrams)
+                              : null;
+                          return (
+                            <div key={l.movementId} className="py-0.5 text-emerald-800 dark:text-emerald-300">
+                              {l.allocated} {l.unitCode}
+                              {bw && (
+                                <span className="text-[11px]"> (= {bw.qty} {bw.unit})</span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </TD>
+                      <TD className="text-right font-mono">
+                        {ch.lines.map((l) => {
+                          const rw =
+                            l.remainingGrams !== null && l.remainingGrams > 0
+                              ? toDisplayWeight(l.remainingGrams)
+                              : null;
+                          return (
+                            <div key={l.movementId} className="py-0.5 font-bold text-amber-900 dark:text-amber-200">
+                              {l.remaining} {l.unitCode}
+                              {rw && (
+                                <span className="font-normal text-[11px]"> (= {rw.qty} {rw.unit})</span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </TD>
+                      <TD>
+                        {ch.status === 'BILLED' ? (
+                          <Badge variant="success">{t('customerInventory.billed')}</Badge>
+                        ) : ch.status === 'PARTIAL' ? (
+                          <Badge variant="warning">{t('customerInventory.partial')}</Badge>
+                        ) : (
+                          <Badge variant="neutral">{t('customerInventory.unbilled')}</Badge>
+                        )}
+                      </TD>
+                      <TD className="text-right">
+                        <div className="flex justify-end items-center gap-1.5">
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            onClick={() => openPrint(ch.lines[0]?.referenceId || ch.number, 'dispatch')}
+                            title={t('customerInventory.printChallanTitle')}
+                            className="text-[11px] shadow-2xs"
+                          >
+                            <Printer className="w-3.5 h-3.5 text-primary-foreground" />
+                            <span>{t('customerInventory.printChallan')}</span>
+                          </Button>
+                          {onOpenBillingForCustomer && ch.status !== 'BILLED' && (
+                            <Button
+                              variant="success"
+                              size="sm"
+                              onClick={() => onOpenBillingForCustomer(effectiveCustomerId)}
+                              title={t('customerInventory.billTitle2')}
+                              className="text-[11px] px-2 py-1"
+                            >
+                              {t('customerInventory.bill')}
+                            </Button>
+                          )}
+                          {firstReturnable ? (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => handleOpenReturn(effectiveCustomerId, firstReturnable.productId)}
+                              title={t('customerInventory.returnTitle')}
+                              className="text-[11px] px-2 py-1"
+                            >
+                              {t('customerInventory.return')}
+                            </Button>
+                          ) : (
+                            <span
+                              className="inline-flex items-center gap-1 text-[11px] font-mono font-bold text-emerald-800 dark:text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-1 rounded-md"
+                              title={t('customerInventory.billedTitle')}
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                              <span>{t('customerInventory.billed')}</span>
+                            </span>
+                          )}
+                        </div>
+                      </TD>
+                    </TR>
+                  );
+                }))}
                 </TBody>
               </Table>
             </div>
+            {movementCards.length > 0 && (
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 border-t border-border">
+                <span className="text-[11px] font-mono text-muted-foreground">
+                  {t('customerInventory.pgOf', { page: holdingsSafePage, pages: holdingsPageCount })}
+                </span>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => setHoldingsPage(holdingsSafePage - 1)}
+                    disabled={holdingsSafePage <= 1}
+                  >
+                    {t('customerInventory.pgPrev')}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => setHoldingsPage(holdingsSafePage + 1)}
+                    disabled={holdingsSafePage >= holdingsPageCount}
+                  >
+                    {t('customerInventory.pgNext')}
+                  </Button>
+                  <Select
+                    value={holdingsPageSize}
+                    onChange={(e) => {
+                      setHoldingsPageSize(Number(e.target.value));
+                      setHoldingsPage(1);
+                    }}
+                    aria-label={t('customerInventory.pgPerPage')}
+                    className="w-24"
+                  >
+                    {[10, 25, 50].map((n) => (
+                      <option key={n} value={n}>
+                        {n}
+                      </option>
+                    ))}
+                  </Select>
+                  <span className="text-[11px] text-muted-foreground whitespace-nowrap">
+                    {t('customerInventory.pgPerPage')}
+                  </span>
+                </div>
+              </div>
+            )}
           </TableShell>
         </div>
       )}
@@ -363,18 +817,18 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
         <TableShell>
           <div className="overflow-x-auto">
             <Table className="text-left border-collapse">
-              <caption className="sr-only">Customer inventory movement ledger</caption>
+              <caption className="sr-only">{t('customerInventory.movementsCaption')}</caption>
               <THead>
                 <TR className="hover:bg-transparent">
-                  <TH scope="col">Date</TH>
-                  <TH scope="col">Customer Entity</TH>
-                  <TH scope="col">Product</TH>
-                  <TH scope="col">Movement Type</TH>
-                  <TH scope="col" className="text-right">Quantity</TH>
-                  <TH scope="col">Challan / Transporter</TH>
-                  <TH scope="col" className="text-center">Delivery Challan</TH>
-                  <TH scope="col" className="text-center">Billing Status</TH>
-                  <TH scope="col">Created By</TH>
+                  <TH scope="col">{t('customerInventory.thDate')}</TH>
+                  <TH scope="col">{t('customerInventory.thEntity')}</TH>
+                  <TH scope="col">{t('customerInventory.thProduct')}</TH>
+                  <TH scope="col">{t('customerInventory.thMovement')}</TH>
+                  <TH scope="col" className="text-right">{t('customerInventory.thQty')}</TH>
+                  <TH scope="col">{t('customerInventory.thChallan')}</TH>
+                  <TH scope="col" className="text-center">{t('customerInventory.thDelivery')}</TH>
+                  <TH scope="col" className="text-center">{t('customerInventory.thBilling')}</TH>
+                  <TH scope="col">{t('customerInventory.thCreatedBy')}</TH>
                 </TR>
               </THead>
               <TBody>
@@ -404,11 +858,11 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
                       </TD>
 
                       <TD className="font-sans font-semibold">
-                        {cust?.customer_name || 'Client'}
+                        {cust?.customer_name || t('customerInventory.clientFallback')}
                       </TD>
 
                       <TD className="font-sans">
-                        {prod?.product_name || 'Item'}
+                        {prod?.product_name || t('dashboard.itemFallback')}
                       </TD>
 
                       <TD>
@@ -426,7 +880,7 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
                       </TD>
 
                       <TD className="font-sans text-muted-foreground">
-                        <div className="font-semibold text-foreground font-mono">Ref: #{mov.reference_id}</div>
+                        <div className="font-semibold text-foreground font-mono">{t('companyInventory.refLabel', { ref: mov.reference_id })}</div>
                       </TD>
 
                       <TD className="text-center">
@@ -434,15 +888,15 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
                           <Button
                             variant="primary"
                             size="sm"
-                            onClick={() => setSelectedChallanRef(mov.reference_id)}
-                            title="Print / View GST Delivery Challan"
+                            onClick={() => openPrint(mov.reference_id, 'dispatch')}
+                            title={t('customerInventory.printChallanTitle')}
                             className="text-[11px] shadow-2xs"
                           >
                             <Printer className="w-3.5 h-3.5 text-primary-foreground" />
-                            <span>Print Challan</span>
+                            <span>{t('customerInventory.printChallan')}</span>
                           </Button>
                         ) : (
-                          <span className="text-[10px] font-mono text-muted-foreground">Return Slip</span>
+                          <span className="text-[10px] font-mono text-muted-foreground">{t('customerInventory.returnSlip')}</span>
                         )}
                       </TD>
 
@@ -450,11 +904,11 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
                         {!billingStatus ? (
                           <span className="text-[10px] font-mono text-muted-foreground">—</span>
                         ) : billingStatus === 'BILLED' ? (
-                          <Badge variant="success">Billed</Badge>
+                          <Badge variant="success">{t('customerInventory.billed')}</Badge>
                         ) : billingStatus === 'PARTIAL' ? (
-                          <Badge variant="warning">Partial</Badge>
+                          <Badge variant="warning">{t('customerInventory.partial')}</Badge>
                         ) : (
-                          <Badge variant="neutral">Unbilled</Badge>
+                          <Badge variant="neutral">{t('customerInventory.unbilled')}</Badge>
                         )}
                       </TD>
 
@@ -472,8 +926,8 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
       <Modal
         isOpen={isDispatchModalOpen}
         onClose={() => setIsDispatchModalOpen(false)}
-        title="Create Customer Dispatch & Delivery Challan"
-        subtitle="Rule 55 CGST Delivery Challan generation with atomic company-to-customer stock transfer"
+        title={t('customerInventory.dispatchTitle')}
+        subtitle={t('customerInventory.dispatchSubtitle')}
         maxWidth="2xl"
       >
         <form onSubmit={handleConfirmDispatch} className="space-y-4 text-xs">
@@ -484,7 +938,7 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
           {/* Consignee and Challan Header */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3 bg-muted border border-border rounded-md">
             <div className="sm:col-span-2">
-              <Label className="mb-1">Customer / Consignee *</Label>
+              <Label className="mb-1">{t('customerInventory.consignee')}</Label>
               <CustomerPicker
                 value={effectiveDispatchCustomerId}
                 onChange={(id) => setDispatchForm({ ...dispatchForm, customerId: id })}
@@ -493,16 +947,16 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
             </div>
 
             <div>
-              <Label className="mb-1">Challan Number *</Label>
+              <Label className="mb-1">{t('customerInventory.challanNo')}</Label>
               <Input
                 type="text"
                 required
                 value={dispatchForm.referenceId}
                 onChange={(e) => setDispatchForm({ ...dispatchForm, referenceId: e.target.value })}
                 className="w-full font-mono font-bold"
-                placeholder="Auto-assigned in sequence"
+                placeholder={t('customerInventory.challanNoPh')}
               />
-              <p className="text-[10px] text-muted-foreground mt-0.5">Auto-filled — editable, must stay unique per customer.</p>
+              <p className="text-[10px] text-muted-foreground mt-0.5">{t('customerInventory.challanHint')}</p>
             </div>
           </div>
 
@@ -511,11 +965,11 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
             <div className="flex items-center justify-between">
               <span className="font-bold text-foreground uppercase text-[11px] tracking-wider flex items-center gap-1.5">
                 <Truck className="w-3.5 h-3.5 text-foreground" />
-                Goods to Dispatch ({dispatchForm.items.length} Product{dispatchForm.items.length > 1 ? 's' : ''})
+                {t('customerInventory.goodsTitle', { count: dispatchForm.items.length, plural: dispatchForm.items.length > 1 ? 's' : '' })}
               </span>
               <Button type="button" variant="secondary" size="sm" onClick={handleAddDispatchItem} className="text-[11px] px-2.5 py-1">
                 <PlusCircle className="w-3 h-3 text-muted-foreground" />
-                <span>+ Add Item to Challan</span>
+                <span>{t('customerInventory.addItem')}</span>
               </Button>
             </div>
 
@@ -524,6 +978,16 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
                 const selectedProd = products[item.productId];
                 const availableStock = selectedProd ? getCurrentCompanyStock(selectedProd.id) : 0;
                 const prodUom = selectedProd ? uoms[selectedProd.primary_unit_id] : null;
+                const lineMapping = getPieceWeightMapping(item.productId);
+                const entryUomCode = lineMapping
+                  ? uoms[lineMapping.pcsUnitId]?.code
+                  : prodUom?.code;
+                const piece = piecePreviewFor(item.productId, Number(item.quantity));
+                const stockPcsEquiv = (() => {
+                  if (!lineMapping || !selectedProd) return null;
+                  const pus = Object.values(productUnits).filter((pu) => pu.product_id === item.productId);
+                  return convertQuantity(availableStock, selectedProd.primary_unit_id, lineMapping.pcsUnitId, pus);
+                })();
 
                 return (
                   <div
@@ -532,18 +996,17 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
                   >
                     <div className="col-span-12 sm:col-span-6">
                       <label className="block text-[10px] font-mono text-muted-foreground mb-0.5">
-                        Product Item #{idx + 1}
+                        {t('customerInventory.itemLabel', { n: idx + 1 })}
                       </label>
                       <Select
                         value={item.productId}
                         onChange={(e) => {
                           const newProdId = e.target.value;
-                          const p = products[newProdId];
                           const newItems = [...dispatchForm.items];
                           newItems[idx] = {
                             ...newItems[idx],
                             productId: newProdId,
-                            unitId: p ? p.primary_unit_id : 'uom-pcs'
+                            unitId: entryUnitFor(newProdId)
                           };
                           setDispatchForm({ ...dispatchForm, items: newItems });
                         }}
@@ -559,13 +1022,21 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
                         })}
                       </Select>
                       <div className="text-[10px] font-mono text-muted-foreground mt-0.5">
-                        Available in Warehouse: <span className="font-bold text-foreground">{availableStock} {prodUom?.code}</span>
+                        {t('customerInventory.warehouseAvail')}{' '}
+                        {stockPcsEquiv !== null ? (
+                          <>
+                            <span className="font-bold text-foreground">{stockPcsEquiv} PCS</span>{' '}
+                            <span>(≈ {availableStock} {prodUom?.code})</span>
+                          </>
+                        ) : (
+                          <span className="font-bold text-foreground">{availableStock} {prodUom?.code}</span>
+                        )}
                       </div>
                     </div>
 
                     <div className="col-span-8 sm:col-span-4">
                       <label className="block text-[10px] font-mono text-muted-foreground mb-0.5">
-                        Quantity ({prodUom?.code})
+                        {t('customerInventory.qtyLabel', { uom: entryUomCode ?? '' })}
                       </label>
                       <Input
                         type="number"
@@ -582,6 +1053,11 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
                         }}
                         className="w-full font-mono font-bold text-sm"
                       />
+                      {piece && (
+                        <div className="text-[11px] font-mono font-semibold text-emerald-800 dark:text-emerald-300 mt-0.5">
+                          {t('customerInventory.pieceWeightPreview', { pcs: Number(item.quantity), grams: piece.grams, kg: piece.kg })}
+                        </div>
+                      )}
                     </div>
 
                     <div className="col-span-4 sm:col-span-2 flex justify-end items-end h-full pt-4">
@@ -591,13 +1067,13 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
                           variant="ghost"
                           size="icon"
                           onClick={() => handleRemoveDispatchItem(idx)}
-                          aria-label="Remove dispatch line item"
-                          title="Remove item"
+                          aria-label={t('customerInventory.removeItem')}
+                          title={t('customerInventory.removeItemTitle')}
                         >
                           <Trash2 className="w-4 h-4" aria-hidden="true" />
                         </Button>
                       ) : (
-                        <span className="text-[10px] font-mono text-muted-foreground">Primary</span>
+                        <span className="text-[10px] font-mono text-muted-foreground">{t('customerInventory.primary')}</span>
                       )}
                     </div>
                   </div>
@@ -609,16 +1085,16 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
           <div className="flex items-center justify-between pt-3 border-t border-border">
             <span className="text-[11px] font-mono text-muted-foreground flex items-center gap-1">
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-              Will generate printable Delivery Challan immediately
+              {t('customerInventory.willGenerate')}
             </span>
 
             <div className="flex gap-2">
               <Button type="button" variant="secondary" size="sm" onClick={() => setIsDispatchModalOpen(false)}>
-                Cancel
+                {t('common.cancel')}
               </Button>
               <Button type="submit" variant="primary" size="sm" className="shadow-2xs">
                 <Printer className="w-3.5 h-3.5" />
-                <span>Confirm &amp; Generate Challan</span>
+                <span>{t('customerInventory.confirmDispatch')}</span>
               </Button>
             </div>
           </div>
@@ -629,8 +1105,8 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
       <Modal
         isOpen={isReturnModalOpen}
         onClose={() => setIsReturnModalOpen(false)}
-        title="Record Customer Material Return"
-        subtitle="Credits company warehouse and reduces customer held balance"
+        title={t('customerInventory.returnTitle2')}
+        subtitle={t('customerInventory.returnSubtitle')}
         maxWidth="lg"
       >
         <form onSubmit={handleConfirmReturn} className="space-y-4 text-xs">
@@ -639,7 +1115,7 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
           )}
 
           <div>
-            <Label className="mb-1">Customer / Consignee</Label>
+            <Label className="mb-1">{t('customerInventory.retCustomer')}</Label>
             <CustomerPicker
               value={effectiveReturnCustomerId}
               onChange={(id) => setReturnForm({ ...returnForm, customerId: id })}
@@ -648,15 +1124,14 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
           </div>
 
           <div>
-            <Label className="mb-1">Product</Label>
+            <Label className="mb-1">{t('customerInventory.retProduct')}</Label>
             <Select
               value={returnForm.productId}
               onChange={(e) => {
-                const p = products[e.target.value];
                 setReturnForm({
                   ...returnForm,
                   productId: e.target.value,
-                  unitId: p ? p.primary_unit_id : 'uom-pcs'
+                  unitId: entryUnitFor(e.target.value)
                 });
               }}
               className="w-full text-xs"
@@ -671,7 +1146,14 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label className="mb-1">Return Quantity</Label>
+              <Label className="mb-1">
+                {(() => {
+                  const m = getPieceWeightMapping(returnForm.productId);
+                  return m
+                    ? `${t('customerInventory.retQty')} (${uoms[m.pcsUnitId]?.code ?? 'PCS'})`
+                    : t('customerInventory.retQty');
+                })()}
+              </Label>
               <Input
                 type="number"
                 min="1"
@@ -683,40 +1165,54 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
             </div>
 
             <div>
-              <Label className="mb-1">Return Reference *</Label>
+              <Label className="mb-1">{t('customerInventory.retRef')}</Label>
               <Input
                 type="text"
                 required
                 value={returnForm.referenceId}
                 onChange={(e) => setReturnForm({ ...returnForm, referenceId: e.target.value })}
                 className="w-full font-mono"
-                placeholder="Auto-assigned in sequence"
+                placeholder={t('customerInventory.retRefPh')}
               />
             </div>
           </div>
 
+          {(() => {
+            const rp = piecePreviewFor(returnForm.productId, Number(returnForm.quantity));
+            return rp ? (
+              <div className="text-[11px] font-mono font-semibold text-emerald-800 dark:text-emerald-300">
+                {t('customerInventory.pieceWeightPreview', { pcs: Number(returnForm.quantity), grams: rp.grams, kg: rp.kg })}
+              </div>
+            ) : null;
+          })()}
+
           <div className="flex justify-end gap-2 pt-3 border-t border-border">
             <Button type="button" variant="secondary" size="sm" onClick={() => setIsReturnModalOpen(false)}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button type="submit" variant="primary" size="sm">
-              Accept Return
+              {t('customerInventory.acceptReturn')}
             </Button>
           </div>
         </form>
       </Modal>
-      {/* Global Delivery Challan Print & Preview Modal */}
+      {/* Global Delivery Challan Print & Preview Modal (dispatch + returns) */}
       {selectedChallanRef && (
         <Modal
           isOpen={Boolean(selectedChallanRef)}
-          onClose={() => setSelectedChallanRef(null)}
-          title={`Delivery Challan #${selectedChallanRef}`}
-          subtitle="Rule 55 CGST / SGST Delivery Challan for customer goods dispatch"
+          onClose={() => closePrint()}
+          title={
+            printDirection === 'return'
+              ? t('customerInventory.returnSlipNo', { ref: selectedChallanRef })
+              : t('printBar.challanNo', { ref: selectedChallanRef })
+          }
+          subtitle={t('companyInventory.challanModalSubtitle')}
           maxWidth="full"
         >
           <DeliveryChallanPrintView
             challanReference={selectedChallanRef}
-            onClose={() => setSelectedChallanRef(null)}
+            direction={printDirection}
+            onClose={() => closePrint()}
           />
         </Modal>
       )}

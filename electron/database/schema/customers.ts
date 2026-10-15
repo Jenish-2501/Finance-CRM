@@ -4,6 +4,7 @@ export const customers = sqliteTable('customers', {
   id: text('id').primaryKey(),
   customerName: text('customer_name').notNull(),
   customerNumber: text('customer_number').notNull(), // searchable short code, unique
+  gujaratiName: text('gujarati_name'), // optional Gujarati nickname (v16), null = none
   pan: text('pan').notNull(),
   gstNumber: text('gst_number').notNull(),
   mobile: text('mobile').notNull(),

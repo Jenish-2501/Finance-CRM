@@ -1,24 +1,31 @@
 import React, { useState } from 'react';
 import { useAccountingStore } from '../store/accountingStore';
-import { formatINR, roundCurrency, getCustomerStateCode } from '../utils/calculations';
+import { formatINR, roundCurrency, toPcsDisplayQty, toDisplayWeight, getCustomerStateCode } from '../utils/calculations';
 import {
   Download
 } from 'lucide-react';
-import { Button, CardHeader, KpiCard, PageHeader, TableShell, Table, THead, TBody, TR, TH, TD, Well, Tabs } from '../components/ui';
+import { Button, CardHeader, Input, KpiCard, Label, PageHeader, TableShell, Table, THead, TBody, TR, TH, TD, Well, Tabs } from '../components/ui';
+import { CustomerPicker, firstCustomerId } from '../components/common/CustomerPicker';
+import { buildMovementLedgerPdf, docToBase64 } from '../utils/pdfDocuments';
+import { useT } from '../i18n';
 
 export const ReportsView: React.FC = () => {
+  const { t } = useT();
   const {
     invoices,
     invoicePayments,
     customers,
     products,
     uoms,
+    productUnits,
+    customerInventoryMovements,
     getCurrentCompanyStock,
+    getPieceWeightMapping,
     businessSettings
   } = useAccountingStore();
 
   const [activeReport, setActiveReport] = useState<
-    'sales' | 'receivables' | 'payments' | 'gst' | 'inventory' | 'consignments'
+    'sales' | 'receivables' | 'payments' | 'gst' | 'inventory' | 'consignments' | 'movements'
   >('sales');
 
   const allInvoices = Object.values(invoices);
@@ -105,25 +112,199 @@ export const ReportsView: React.FC = () => {
   const totalIGST = finalizedInvoices.reduce((s, i) => s + i.igst, 0);
   const totalTaxCollected = roundCurrency(totalCGST + totalSGST + totalIGST);
 
+  // 4. Customer Movement Ledger (deliveries + returns for one customer).
+  const [movCustomerId, setMovCustomerId] = useState('cust-1');
+  const [movFrom, setMovFrom] = useState('');
+  const [movTo, setMovTo] = useState('');
+  const [movBusy, setMovBusy] = useState(false);
+  const effectiveMovCustomerId = firstCustomerId(customers, movCustomerId);
+  const movCustomer = customers[effectiveMovCustomerId];
+
+  interface MovLedgerRow {
+    id: string;
+    date: string;
+    docNo: string;
+    isReturn: boolean;
+    productId: string;
+    productName: string;
+    signedQty: number;
+    unitCode: string;
+    isPcs: boolean;
+    signedGrams: number | null;
+  }
+  const movRows: MovLedgerRow[] = Object.values(customerInventoryMovements)
+    .filter((m) => {
+      if (m.customer_id !== effectiveMovCustomerId) return false;
+      if (m.movement_type !== 'DISPATCH' && m.movement_type !== 'RETURN') return false;
+      const day = (m.movement_date || '').slice(0, 10);
+      if (movFrom && day < movFrom) return false;
+      if (movTo && day > movTo) return false;
+      return true;
+    })
+    .sort((a, b) => new Date(a.movement_date).getTime() - new Date(b.movement_date).getTime())
+    .map((m) => {
+      const isReturn = m.movement_type === 'RETURN';
+      const signedQty = roundCurrency(isReturn ? -m.quantity : m.quantity);
+      const mapping = getPieceWeightMapping(m.product_id);
+      const isPcs = !!mapping && m.unit_id === mapping.pcsUnitId;
+      const signedGrams = isPcs ? roundCurrency(signedQty * mapping!.gramsPerPiece) : null;
+      return {
+        id: m.id,
+        date: m.movement_date,
+        docNo: m.reference_id,
+        isReturn,
+        productId: m.product_id,
+        productName: products[m.product_id]?.product_name || m.product_id,
+        signedQty,
+        unitCode: uoms[m.unit_id]?.code || '',
+        isPcs,
+        signedGrams
+      };
+    });
+
+  interface MovLedgerTotal {
+    productId: string;
+    productName: string;
+    unitCode: string;
+    dispatched: number;
+    returned: number;
+    net: number;
+    netGrams: number | null;
+  }
+  const movTotals: MovLedgerTotal[] = (() => {
+    const byKey = new Map<string, MovLedgerTotal & { gramsPerPiece: number | null }>();
+    for (const r of movRows) {
+      const key = `${r.productId}::${r.unitCode}`;
+      let t = byKey.get(key);
+      if (!t) {
+        const prod = products[r.productId];
+        const mapping = getPieceWeightMapping(r.productId);
+        t = {
+          productId: r.productId,
+          productName: prod?.product_name || r.productId,
+          unitCode: r.unitCode,
+          dispatched: 0,
+          returned: 0,
+          net: 0,
+          netGrams: null,
+          gramsPerPiece: r.isPcs && mapping ? mapping.gramsPerPiece : null
+        };
+        byKey.set(key, t);
+      }
+      if (r.signedQty >= 0) t.dispatched = roundCurrency(t.dispatched + r.signedQty);
+      else t.returned = roundCurrency(t.returned - r.signedQty);
+      t.net = roundCurrency(t.dispatched - t.returned);
+      t.netGrams = t.gramsPerPiece !== null ? roundCurrency(t.net * t.gramsPerPiece) : null;
+    }
+    return [...byKey.values()]
+      .map(({ gramsPerPiece: _g, ...rest }) => rest)
+      .sort((a, b) => a.productName.localeCompare(b.productName));
+  })();
+
+  const movPeriodLabel =
+    movFrom || movTo ? `${movFrom || '…'} to ${movTo || '…'}` : 'All time';
+
+  const handleExportMovements = () => {
+    const headers = ['Date', 'Challan / Slip No.', 'Type', 'Product', 'Quantity', 'Unit', 'Weight'];
+    const rows = movRows.map((r) => {
+      const w = r.signedGrams !== null ? toDisplayWeight(Math.abs(r.signedGrams)) : null;
+      return [
+        new Date(r.date).toLocaleDateString(),
+        r.docNo,
+        r.isReturn ? t('reports.movReturn') : t('reports.movDelivery'),
+        r.productName,
+        r.signedQty,
+        r.unitCode,
+        w ? `${r.signedGrams! < 0 ? '-' : ''}${w.qty} ${w.unit}` : ''
+      ];
+    });
+    const custNo = movCustomer?.customer_number || effectiveMovCustomerId;
+    exportToCSV(`movement_ledger_${custNo}_${movFrom || 'all'}_${movTo || 'all'}`, headers, rows);
+  };
+
+  const handleDownloadMovementsPdf = async () => {
+    if (movBusy || movRows.length === 0) return;
+    setMovBusy(true);
+    try {
+      const custLabel = movCustomer
+        ? `${movCustomer.customer_name} (${movCustomer.city || ''}${movCustomer.state ? `, ${movCustomer.state}` : ''})`
+        : effectiveMovCustomerId;
+      const doc = buildMovementLedgerPdf({
+        business: businessSettings,
+        logoDataUrl: businessSettings.logo_data ?? undefined,
+        customerName: movCustomer?.customer_name || effectiveMovCustomerId,
+        customerMeta: custLabel,
+        periodLabel: movPeriodLabel,
+        rows: movRows.map((r) => {
+          const w = r.signedGrams !== null ? toDisplayWeight(Math.abs(r.signedGrams)) : null;
+          const sign = r.signedQty < 0 ? '-' : '+';
+          return {
+            date: new Date(r.date).toLocaleDateString(),
+            docNo: r.docNo,
+            type: r.isReturn ? t('reports.movReturn') : t('reports.movDelivery'),
+            productName: r.productName,
+            qty: `${sign}${Math.abs(r.signedQty)}`,
+            unitCode: r.unitCode,
+            weight: w ? `${r.signedGrams! < 0 ? '-' : ''}${w.qty} ${w.unit}` : '-'
+          };
+        }),
+        totals: movTotals.map((x) => {
+          const w = x.netGrams !== null ? toDisplayWeight(Math.abs(x.netGrams)) : null;
+          return {
+            productName: x.productName,
+            dispatched: `${x.dispatched}`,
+            returned: `${x.returned}`,
+            net: `${x.net}`,
+            unitCode: x.unitCode,
+            netWeight: w ? `${x.netGrams! < 0 ? '-' : ''}${w.qty} ${w.unit}` : '-'
+          };
+        })
+      });
+      const filename = `Movement-Ledger-${movCustomer?.customer_number || effectiveMovCustomerId}-${movFrom || 'all'}-${movTo || 'all'}.pdf`;
+      if (!window.electronAPI?.files?.savePDFBytes) {
+        doc.save(filename);
+        return;
+      }
+      await window.electronAPI.files.savePDFBytes(filename, docToBase64(doc));
+    } finally {
+      setMovBusy(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Header & Controls */}
       <PageHeader
-        title="Financial & Statutory Reports"
-        subtitle="Normalized ledger extracts • GST GSTR-1 preparation • Receivables aging & consignment audits"
+        title={t('reports.title')}
+        subtitle={t('reports.subtitle')}
         actions={
           <>
             {activeReport === 'sales' && (
               <Button variant="primary" size="sm" onClick={handleExportSales}>
                 <Download className="w-3.5 h-3.5" />
-                <span>Export Sales CSV</span>
+                <span>{t('reports.exportSales')}</span>
               </Button>
             )}
             {activeReport === 'receivables' && (
               <Button variant="primary" size="sm" onClick={handleExportReceivables}>
                 <Download className="w-3.5 h-3.5" />
-                <span>Export Receivables CSV</span>
+                <span>{t('reports.exportReceivables')}</span>
               </Button>
+            )}
+            {activeReport === 'movements' && (
+              <>
+                <Button variant="primary" size="sm" onClick={handleExportMovements} disabled={movRows.length === 0}>
+                  <Download className="w-3.5 h-3.5" />
+                  <span>{t('reports.movExportCsv')}</span>
+                </Button>
+                <Button variant="secondary" size="sm" onClick={() => void handleDownloadMovementsPdf()} disabled={movBusy || movRows.length === 0}>
+                  <Download className="w-3.5 h-3.5" />
+                  <span>{t('printBar.downloadPdf')}</span>
+                </Button>
+                <Button variant="secondary" size="sm" onClick={() => window.print()} disabled={movRows.length === 0}>
+                  <span>{t('printBar.print')}</span>
+                </Button>
+              </>
             )}
           </>
         }
@@ -131,15 +312,16 @@ export const ReportsView: React.FC = () => {
 
       {/* Report Selection Tabs */}
       <Tabs
-        ariaLabel="Reports"
+        ariaLabel={t('reports.tabsLabel')}
         activeId={activeReport}
-        onSelect={(id) => setActiveReport(id as 'sales' | 'receivables' | 'gst' | 'inventory' | 'consignments')}
+        onSelect={(id) => setActiveReport(id as 'sales' | 'receivables' | 'gst' | 'inventory' | 'consignments' | 'movements')}
         tabs={[
-          { id: 'sales', label: 'Sales & Invoice Register' },
-          { id: 'receivables', label: 'Receivables & Credit Summary' },
-          { id: 'gst', label: 'GST / Tax Compliance (GSTR-1)' },
-          { id: 'inventory', label: 'Warehouse Stock Valuation' },
-          { id: 'consignments', label: 'Customer Consignment Balances' },
+          { id: 'sales', label: t('reports.tabSales') },
+          { id: 'receivables', label: t('reports.tabReceivables') },
+          { id: 'gst', label: t('reports.tabGst') },
+          { id: 'inventory', label: t('reports.tabInventory') },
+          { id: 'consignments', label: t('reports.tabConsignments') },
+          { id: 'movements', label: t('reports.tabMovements') },
         ]}
       />
 
@@ -148,10 +330,10 @@ export const ReportsView: React.FC = () => {
         <TableShell>
           <CardHeader>
             <span className="font-bold text-foreground uppercase tracking-wide text-xs">
-              Finalized Sales Invoices ({finalizedInvoices.length})
+              {t('reports.salesTitle', { count: finalizedInvoices.length })}
             </span>
             <div className="font-mono text-muted-foreground text-xs">
-              Total Sales Volume:{' '}
+              {t('reports.salesVolume')}{' '}
               <span className="font-bold text-foreground">
                 {formatINR(finalizedInvoices.reduce((s, i) => s + i.grand_total, 0))}
               </span>
@@ -160,17 +342,17 @@ export const ReportsView: React.FC = () => {
 
           <div className="overflow-x-auto">
             <Table className="text-left border-collapse">
-            <caption className="sr-only">Sales and invoice register report</caption>
+            <caption className="sr-only">{t('reports.salesCaption')}</caption>
             <THead>
               <TR className="hover:bg-transparent">
-                <TH scope="col">Invoice #</TH>
-                  <TH scope="col">Date</TH>
-                  <TH scope="col">Customer Entity</TH>
-                  <TH scope="col" className="text-right">Taxable</TH>
-                  <TH scope="col" className="text-right">CGST</TH>
-                  <TH scope="col" className="text-right">SGST</TH>
-                  <TH scope="col" className="text-right">IGST</TH>
-                  <TH scope="col" className="text-right px-4">Grand Total</TH>
+                <TH scope="col">{t('reports.thInvoice')}</TH>
+                  <TH scope="col">{t('reports.thDate')}</TH>
+                  <TH scope="col">{t('reports.thCustomer')}</TH>
+                  <TH scope="col" className="text-right">{t('reports.thTaxable')}</TH>
+                  <TH scope="col" className="text-right">{t('reports.thCgst')}</TH>
+                  <TH scope="col" className="text-right">{t('reports.thSgst')}</TH>
+                  <TH scope="col" className="text-right">{t('reports.thIgst')}</TH>
+                  <TH scope="col" className="text-right px-4">{t('reports.thGrand')}</TH>
               </TR>
             </THead>
             <TBody className="font-mono text-[11px]">
@@ -201,14 +383,14 @@ export const ReportsView: React.FC = () => {
         <TableShell>
           <div className="overflow-x-auto">
             <Table className="text-left border-collapse">
-            <caption className="sr-only">Receivables and credit summary report</caption>
+            <caption className="sr-only">{t('reports.receivablesCaption')}</caption>
             <THead>
               <TR className="hover:bg-transparent">
-                <TH scope="col">Customer Entity</TH>
-                  <TH scope="col">Location</TH>
-                  <TH scope="col" className="text-right">Total Invoiced (Debits)</TH>
-                  <TH scope="col" className="text-right">Total Collected (Credits)</TH>
-                  <TH scope="col" className="text-right px-4">Net Outstanding Balance</TH>
+                <TH scope="col">{t('reports.thCustomer')}</TH>
+                  <TH scope="col">{t('reports.thLocation')}</TH>
+                  <TH scope="col" className="text-right">{t('reports.thBilled')}</TH>
+                  <TH scope="col" className="text-right">{t('reports.thCollected')}</TH>
+                  <TH scope="col" className="text-right px-4">{t('reports.thNet')}</TH>
               </TR>
             </THead>
             <TBody>
@@ -241,11 +423,11 @@ export const ReportsView: React.FC = () => {
       {activeReport === 'gst' && (
         <div className="space-y-6">
           <div className="grid grid-cols-4 gap-4">
-            <KpiCard label="Total Taxable Value" value={formatINR(totalTaxable)} />
-            <KpiCard label="Total CGST (Intra-state)" value={formatINR(totalCGST)} />
-            <KpiCard label="Total SGST (Intra-state)" value={formatINR(totalSGST)} />
+            <KpiCard label={t('reports.kpiTaxable')} value={formatINR(totalTaxable)} />
+            <KpiCard label={t('reports.kpiCgst')} value={formatINR(totalCGST)} />
+            <KpiCard label={t('reports.kpiSgst')} value={formatINR(totalSGST)} />
             <KpiCard
-              label="Total IGST (Inter-state)"
+              label={t('reports.kpiIgst')}
               value={formatINR(totalIGST)}
               tone="info"
               valueClassName="text-sky-800 dark:text-sky-300"
@@ -253,9 +435,9 @@ export const ReportsView: React.FC = () => {
           </div>
 
           <Well className="text-xs space-y-2">
-            <div className="font-bold text-foreground">Total Statutory Tax Liability: {formatINR(totalTaxCollected)}</div>
+            <div className="font-bold text-foreground">{t('reports.taxLiability', { amount: formatINR(totalTaxCollected) })}</div>
             <div className="text-muted-foreground leading-relaxed">
-              Inter-state transactions (customers with state code other than 24) are charged IGST {businessSettings.default_gst_rate}%. Intra-state supplies within Gujarat are split equally into CGST {businessSettings.default_gst_rate / 2}% and SGST {businessSettings.default_gst_rate / 2}%.
+              {t('reports.taxNote', { rate: businessSettings.default_gst_rate, half: businessSettings.default_gst_rate / 2 })}
             </div>
           </Well>
         </div>
@@ -265,24 +447,36 @@ export const ReportsView: React.FC = () => {
       {activeReport === 'inventory' && (
         <TableShell>
           <Table className="text-left border-collapse">
-            <caption className="sr-only">Warehouse stock valuation report</caption>
+            <caption className="sr-only">{t('reports.inventoryCaption')}</caption>
             <THead>
               <TR className="hover:bg-transparent">
-                <TH scope="col">Product Name</TH>
-                <TH scope="col">SKU</TH>
-                <TH scope="col" className="text-right">Physical Warehouse Stock</TH>
-                <TH scope="col" className="text-right">UOM</TH>
+                <TH scope="col">{t('reports.thProduct')}</TH>
+                <TH scope="col">{t('reports.thSku')}</TH>
+                <TH scope="col" className="text-right">{t('reports.thPhysical')}</TH>
+                <TH scope="col" className="text-right">{t('reports.thUom')}</TH>
               </TR>
             </THead>
             <TBody>
               {Object.values(products).map((p) => {
                 const stock = getCurrentCompanyStock(p.id);
                 const uom = uoms[p.primary_unit_id];
+                // Piece-mapped products lead with PCS (weight as reference).
+                const mapping = getPieceWeightMapping(p.id);
+                const pus = mapping
+                  ? Object.values(productUnits).filter((pu) => pu.product_id === p.id)
+                  : [];
+                const pcs = mapping ? toPcsDisplayQty(mapping, stock, p.primary_unit_id, pus) : null;
                 return (
                   <TR key={p.id}>
                     <TD className="font-semibold">{p.product_name}</TD>
                     <TD className="font-mono text-muted-foreground text-[11px]">{p.sku}</TD>
-                    <TD className="text-right font-mono font-bold">{stock.toLocaleString()}</TD>
+                    <TD className="text-right font-mono font-bold">
+                      {pcs !== null ? (
+                        <>{pcs.toLocaleString()} PCS<span className="block text-[10px] font-normal text-muted-foreground">(≈ {stock.toLocaleString()} {uom?.code})</span></>
+                      ) : (
+                        stock.toLocaleString()
+                      )}
+                    </TD>
                     <TD className="text-right font-mono text-muted-foreground">{uom?.code}</TD>
                   </TR>
                 );
@@ -297,16 +491,16 @@ export const ReportsView: React.FC = () => {
         <TableShell>
           <CardHeader>
             <span className="text-xs text-muted-foreground">
-              Consignment stock physically held across client locations.
+              {t('reports.consignNote')}
             </span>
           </CardHeader>
           <Table className="text-left border-collapse">
-            <caption className="sr-only">Customer consignment balances report</caption>
+            <caption className="sr-only">{t('reports.consignCaption')}</caption>
             <THead>
               <TR className="hover:bg-transparent">
-                <TH scope="col">Client Consignee</TH>
-                <TH scope="col">State</TH>
-                <TH scope="col">Location</TH>
+                <TH scope="col">{t('reports.thConsignee')}</TH>
+                <TH scope="col">{t('reports.thState')}</TH>
+                <TH scope="col">{t('reports.thLocation2')}</TH>
               </TR>
             </THead>
             <TBody>
@@ -320,6 +514,129 @@ export const ReportsView: React.FC = () => {
             </TBody>
           </Table>
         </TableShell>
+      )}
+
+      {/* Report 6: Customer Movement Ledger (deliveries + returns, signed) */}
+      {activeReport === 'movements' && (
+        <div className="space-y-4">
+          <div className="no-print flex flex-col lg:flex-row lg:items-end gap-3 p-4 bg-muted border border-input rounded-lg">
+            <div className="flex-1 min-w-[220px]">
+              <Label className="mb-1">{t('reports.movCustomer')}</Label>
+              <CustomerPicker
+                value={effectiveMovCustomerId}
+                onChange={(id) => setMovCustomerId(id)}
+                customers={customers}
+              />
+            </div>
+            <div>
+              <Label className="mb-1">{t('reports.movFrom')}</Label>
+              <Input
+                type="date"
+                value={movFrom}
+                onChange={(e) => setMovFrom(e.target.value)}
+                className="w-full font-mono"
+              />
+            </div>
+            <div>
+              <Label className="mb-1">{t('reports.movTo')}</Label>
+              <Input
+                type="date"
+                value={movTo}
+                onChange={(e) => setMovTo(e.target.value)}
+                className="w-full font-mono"
+              />
+            </div>
+            <div className="text-[11px] font-mono text-muted-foreground whitespace-nowrap pb-2">
+              {movCustomer?.customer_name || ''} • {movPeriodLabel}
+            </div>
+          </div>
+
+          {movTotals.length > 0 && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {movTotals.map((x) => {
+                const w = x.netGrams !== null ? toDisplayWeight(Math.abs(x.netGrams)) : null;
+                return (
+                  <div key={`${x.productId}::${x.unitCode}`} className="p-3.5 bg-card border border-border rounded-lg shadow-2xs text-xs">
+                    <div className="font-semibold text-foreground">{x.productName}</div>
+                    <div className="mt-1.5 space-y-0.5 font-mono text-[11px]">
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">{t('reports.movDispatched')}</span>
+                        <span className="text-emerald-800 dark:text-emerald-300 font-bold">+{x.dispatched} {x.unitCode}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">{t('reports.movReturned')}</span>
+                        <span className="text-destructive font-bold">-{x.returned} {x.unitCode}</span>
+                      </div>
+                      <div className="flex justify-between border-t border-border pt-1">
+                        <span className="text-muted-foreground">{t('reports.movNet')}</span>
+                        <span className="font-bold text-foreground">
+                          {x.net} {x.unitCode}
+                          {w && <span className="text-muted-foreground font-normal"> (= {w.qty} {w.unit})</span>}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <TableShell>
+            <Table className="text-left border-collapse">
+              <caption className="sr-only">{t('reports.movCaption')}</caption>
+              <THead>
+                <TR className="hover:bg-transparent">
+                  <TH scope="col">{t('reports.thDate')}</TH>
+                  <TH scope="col">{t('reports.movDocNo')}</TH>
+                  <TH scope="col">{t('reports.movType')}</TH>
+                  <TH scope="col">{t('reports.thProduct')}</TH>
+                  <TH scope="col" className="text-right">{t('reports.movQty')}</TH>
+                  <TH scope="col" className="text-right">{t('reports.movWeight')}</TH>
+                </TR>
+              </THead>
+              <TBody>
+                {movRows.length === 0 ? (
+                  <tr>
+                    <TD colSpan={6} className="py-8 text-center text-muted-foreground">
+                      {t('reports.movEmpty')}
+                    </TD>
+                  </tr>
+                ) : (
+                  movRows.map((r) => {
+                    const w = r.signedGrams !== null ? toDisplayWeight(Math.abs(r.signedGrams)) : null;
+                    const neg = r.signedQty < 0;
+                    return (
+                      <TR key={r.id} className="font-mono text-[11px]">
+                        <TD className="text-muted-foreground whitespace-nowrap">
+                          {new Date(r.date).toLocaleDateString()}
+                        </TD>
+                        <TD className="font-bold text-foreground">{r.docNo}</TD>
+                        <TD>
+                          <span
+                            className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded-md border ${
+                              r.isReturn
+                                ? 'bg-destructive/10 text-destructive border-destructive/25'
+                                : 'bg-emerald-500/10 text-emerald-800 dark:text-emerald-300 border-emerald-500/25'
+                            }`}
+                          >
+                            {r.isReturn ? t('reports.movReturn') : t('reports.movDelivery')}
+                          </span>
+                        </TD>
+                        <TD className="font-sans font-semibold text-xs">{r.productName}</TD>
+                        <TD className={`text-right font-bold ${neg ? 'text-destructive' : 'text-emerald-800 dark:text-emerald-300'}`}>
+                          {neg ? '-' : '+'}{Math.abs(r.signedQty)} {r.unitCode}
+                        </TD>
+                        <TD className="text-right text-muted-foreground">
+                          {w ? `${neg ? '-' : ''}${w.qty} ${w.unit}` : '—'}
+                        </TD>
+                      </TR>
+                    );
+                  })
+                )}
+              </TBody>
+            </Table>
+          </TableShell>
+        </div>
       )}
     </div>
   );

@@ -93,6 +93,8 @@ import {
 import {
   roundCurrency,
   convertQuantity,
+  getPieceWeightMapping as resolvePieceWeightMapping,
+  isValidGramsPerPiece,
   calculateLineItemFinancials,
   calculateInvoiceTotals,
   calculateInvoiceOutstanding,
@@ -204,6 +206,13 @@ interface AccountingState {
   ) => Product;
   updateProduct: (id: string, data: Partial<Product>) => void;
   configureProductUnit: (data: Omit<ProductUnit, 'id' | 'created_at' | 'updated_at'>) => ProductUnit;
+  // Piece-weight mapping ("enter PCS, weight comes automatically"). Ensures the
+  // PCS row (grams per piece, in primary units) and — for GRAM-primary products —
+  // the KG row (1000). Billing (Phase 3) and challan entry (Phase 2) key off
+  // getPieceWeightMapping.
+  getPieceWeightMapping: (productId: string) => { gramsPerPiece: number; pcsUnitId: string; kgUnitId: string } | null;
+  savePieceWeightMapping: (productId: string, gramsPerPiece: number) => { success: boolean; error?: string };
+  removePieceWeightMapping: (productId: string) => { success: boolean; error?: string };
   createProductPrice: (data: Omit<ProductPrice, 'id' | 'created_at' | 'updated_at'>) => ProductPrice;
   setCustomerPrice: (data: { customerId: string; productId: string; unitId: string; price: number }) => { success: boolean; error?: string };
   clearCustomerPrice: (customerId: string, productId: string, unitId: string) => { success: boolean; error?: string };
@@ -1019,8 +1028,168 @@ export const useAccountingStore = create<AccountingState>()(
           productUnits: { ...state.productUnits, [id]: newPU }
         }));
         persistDiff({ productUnits: [newPU as unknown as Record<string, unknown>] });
-        get().logAudit('PRODUCT_UNIT_CONFIGURED', 'PRODUCT_UNIT', id, newPU as unknown as Record<string, unknown>);
+        get().logAudit('PRODUCT_UNIT_CONFIGURED', 'UNIT_OF_MEASURE', id, newPU as unknown as Record<string, unknown>);
         return newPU;
+      },
+
+      getPieceWeightMapping: (productId: string) => {
+        const { products, productUnits, uoms } = get();
+        const product = products[productId];
+        if (!product) return null;
+        const pus = Object.values(productUnits).filter((pu) => pu.product_id === productId);
+        return resolvePieceWeightMapping(pus, uoms, product.primary_unit_id);
+      },
+
+      savePieceWeightMapping: (productId: string, gramsPerPiece: number) => {
+        const { products, productUnits, uoms } = get();
+        const product = products[productId];
+        if (!product || !product.is_active) {
+          return { success: false, error: 'Product not found or inactive.' };
+        }
+        const primary = uoms[product.primary_unit_id];
+        const primaryCode = (primary?.code || '').trim().toUpperCase();
+        const primaryIsGram = primaryCode === 'GRAM';
+        const primaryIsKg = primaryCode === 'KG';
+        if (!primary || (!primaryIsGram && !primaryIsKg)) {
+          return { success: false, error: 'Piece mapping needs a GRAM or KG primary product.' };
+        }
+        if (!isValidGramsPerPiece(gramsPerPiece)) {
+          return { success: false, error: 'Grams per piece must be a number more than zero.' };
+        }
+        // Factor is stored in PRIMARY units (grams as-is; grams/1000 for KG).
+        const pcsFactor = primaryIsGram ? gramsPerPiece : gramsPerPiece / 1000;
+        if (!(pcsFactor > 0) || !Number.isFinite(pcsFactor)) {
+          return { success: false, error: 'Grams per piece must be a number more than zero.' };
+        }
+        const pcs = Object.values(uoms).find((u) => u.code === 'PCS' && u.is_active);
+        const kg = Object.values(uoms).find((u) => u.code === 'KG' && u.is_active);
+        if (!pcs || !kg) {
+          return { success: false, error: 'PCS and KG units must exist and stay active.' };
+        }
+        const now = new Date().toISOString();
+        const existing = Object.values(productUnits).filter((pu) => pu.product_id === productId);
+        const taken = new Set(Object.values(productUnits).map((pu) => pu.id));
+        const claimId = (base: string): string => {
+          let id = base;
+          let n = 2;
+          while (taken.has(id)) {
+            id = `${base}-${n}`;
+            n += 1;
+          }
+          taken.add(id);
+          return id;
+        };
+        const rows: ProductUnit[] = [];
+        const pcsRow = existing.find((pu) => pu.unit_id === pcs.id);
+        if (pcsRow) {
+          if (
+            pcsRow.conversion_to_primary !== pcsFactor ||
+            !pcsRow.is_stock_unit ||
+            pcsRow.is_billing_unit
+          ) {
+            rows.push({
+              ...pcsRow,
+              conversion_to_primary: pcsFactor,
+              is_stock_unit: true,
+              is_billing_unit: false,
+              updated_at: now
+            });
+          }
+        } else {
+          rows.push({
+            id: claimId(`pu-${productId}-pcs`),
+            product_id: productId,
+            unit_id: pcs.id,
+            conversion_to_primary: pcsFactor,
+            is_stock_unit: true,
+            is_billing_unit: false,
+            created_at: now,
+            updated_at: now
+          });
+        }
+        if (primaryIsGram) {
+          // KG billing/display row (1 KG = 1000 gram). For KG-primary products
+          // the primary row itself is the KG row — nothing to ensure.
+          const kgRow = existing.find((pu) => pu.unit_id === kg.id);
+          if (kgRow) {
+            if (kgRow.conversion_to_primary !== 1000 || !kgRow.is_billing_unit) {
+              rows.push({
+                ...kgRow,
+                conversion_to_primary: 1000,
+                is_billing_unit: true,
+                updated_at: now
+              });
+            }
+          } else {
+            rows.push({
+              id: claimId(`pu-${productId}-kg`),
+              product_id: productId,
+              unit_id: kg.id,
+              conversion_to_primary: 1000,
+              is_stock_unit: false,
+              is_billing_unit: true,
+              created_at: now,
+              updated_at: now
+            });
+          }
+        } else {
+          // KG primary: keep the primary row billing-enabled so KG pricing
+          // stays visible in Customer Pricing.
+          const primaryRow = existing.find((pu) => pu.unit_id === product.primary_unit_id);
+          if (primaryRow && !primaryRow.is_billing_unit) {
+            rows.push({ ...primaryRow, is_billing_unit: true, updated_at: now });
+          }
+        }
+        if (rows.length === 0) return { success: true }; // already exact
+        set((state) => {
+          const next = { ...state.productUnits };
+          for (const r of rows) next[r.id] = r;
+          return { productUnits: next };
+        });
+        persistDiff({ productUnits: rows as unknown as Record<string, unknown>[] });
+        get().logAudit('PIECE_WEIGHT_SET', 'PRODUCT_UNIT', rows[0].id, {
+          productId,
+          productName: product.product_name,
+          gramsPerPiece
+        });
+        return { success: true };
+      },
+
+      removePieceWeightMapping: (productId: string) => {
+        const st = get();
+        const mapping = st.getPieceWeightMapping(productId);
+        if (!mapping) return { success: true }; // nothing mapped
+        // Recorded PCS movements derive their weight from this mapping — removing
+        // it would silently reinterpret them 1:1 (convertQuantity fallback).
+        const pcsUsed =
+          Object.values(st.customerInventoryMovements).some(
+            (m) => m.product_id === productId && m.unit_id === mapping.pcsUnitId
+          ) ||
+          Object.values(st.inventoryMovements).some(
+            (m) => m.product_id === productId && m.unit_id === mapping.pcsUnitId
+          );
+        if (pcsUsed) {
+          return {
+            success: false,
+            error: 'Mapping is used by recorded stock movements and cannot be removed.'
+          };
+        }
+        const row = Object.values(st.productUnits).find(
+          (pu) => pu.product_id === productId && pu.unit_id === mapping.pcsUnitId
+        );
+        if (!row) return { success: true };
+        set((state) => {
+          const next = { ...state.productUnits };
+          delete next[row.id];
+          return { productUnits: next };
+        });
+        try {
+          window.electronAPI?.store.delete('productUnits', row.id)?.catch(() => {});
+        } catch {
+          // IPC unavailable — memory state remains the source of truth.
+        }
+        get().logAudit('PIECE_WEIGHT_REMOVED', 'PRODUCT_UNIT', row.id, { productId });
+        return { success: true };
       },
 
       createProductPrice: (data) => {
@@ -1430,6 +1599,22 @@ export const useAccountingStore = create<AccountingState>()(
           return {
             success: false,
             error: `Customer inventory insufficient for return. Held: ${customerStock}, Return attempted: ${qtyInPrimary} (Primary Units)`
+          };
+        }
+
+        // Returns are accepted only against unbilled stock: once everything the
+        // customer holds is billed, there is nothing left to take back. Uses the
+        // same summary semantics as holdings/billing, so the definition of
+        // "billed" can never drift between screens.
+        const unbilledRow = get()
+          .getCustomerInventorySummary(customerId)
+          .find((s) => s.productId === productId);
+        const unbilled = unbilledRow ? unbilledRow.unbilledQuantity : 0;
+        if (qtyInPrimary > unbilled) {
+          const unitCode = unbilledRow ? unbilledRow.unitCode : '';
+          return {
+            success: false,
+            error: `Only ${unbilled} unbilled ${unitCode} available for return. Billed stock cannot be returned.`
           };
         }
 

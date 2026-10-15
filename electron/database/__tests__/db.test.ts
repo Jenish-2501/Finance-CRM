@@ -22,7 +22,7 @@ const now = () => new Date().toISOString();
   initDatabase(dir);
   assert.ok(fs.existsSync(path.join(dir, 'database', 'app.sqlite')), 'database file created');
   const applied = getSqlite().prepare('SELECT version FROM _migrations ORDER BY version').all();
-  assert.deepEqual(applied, [{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 }, { version: 14 }]);
+  assert.deepEqual(applied, [{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 }, { version: 14 }, { version: 15 }, { version: 16 }, { version: 17 }]);
   const health = checkDatabaseHealth();
   assert.equal(health.connected, true);
   assert.equal(health.migrationStatus, 'OK');
@@ -35,7 +35,7 @@ const now = () => new Date().toISOString();
   initDatabase(dir);
   const health2 = checkDatabaseHealth();
   assert.equal(health2.migrationStatus, 'OK');
-  assert.deepEqual(health2.appliedMigrations, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
+  assert.deepEqual(health2.appliedMigrations, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]);
   closeDatabase();
 }
 
@@ -160,7 +160,7 @@ const now = () => new Date().toISOString();
 
   // Migrations v2+v3 applied on fresh install
   const applied = getSqlite().prepare('SELECT version FROM _migrations ORDER BY version').all();
-  assert.deepEqual(applied, [{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 }, { version: 14 }]);
+  assert.deepEqual(applied, [{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 }, { version: 14 }, { version: 15 }, { version: 16 }, { version: 17 }]);
 
   // Default 1234 works; only a hash is stored, never plaintext
   assert.deepEqual(verifyPasscode('1234'), { ok: true });

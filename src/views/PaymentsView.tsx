@@ -10,6 +10,7 @@ import {
 import { Modal } from '../components/common/Modal';
 import { Badge } from '../components/common/Badge';
 import { Alert, Button, Input, Label, PageHeader, SearchInput, Select, TableShell, Table, THead, TBody, TR, TH, TD } from '../components/ui';
+import { useT } from '../i18n';
 
 interface PaymentsViewProps {
   initialInvoiceId?: string | null;
@@ -20,6 +21,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
   initialInvoiceId = null,
   onOpenInvoice
 }) => {
+  const { t } = useT();
   const {
     invoicePayments,
     invoices,
@@ -73,7 +75,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
     setPaymentError('');
 
     if (!formInvoiceId) {
-      setPaymentError('Please select a finalized invoice.');
+      setPaymentError(t('payments.errNoInvoice'));
       return;
     }
 
@@ -87,14 +89,14 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
     });
 
     if (!res.success) {
-      setPaymentError(res.error || 'Payment failed.');
+      setPaymentError(res.error || t('payments.errFailed'));
     } else {
       setIsRecordModalOpen(false);
     }
   };
 
   const handleCancelPayment = (paymentId: string) => {
-    const reason = prompt('Please enter reversal reason for audit trail:');
+    const reason = prompt(t('payments.reverseReason'));
     if (reason) {
       cancelInvoicePayment(paymentId, reason);
     }
@@ -120,20 +122,19 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
     <div className="space-y-6">
       {/* Header & Controls */}
       <PageHeader
-        title="Payment Collections & Receipts"
-        subtitle="Credit ledger postings • Overpayment invariant enforcement • Multi-mode remittances"
+        title={t('payments.title')}
         actions={
           <>
             <SearchInput
               icon={<Search className="w-4 h-4" />}
               type="text"
-              placeholder="Search reference # or customer..."
+              placeholder={t('payments.searchPh')}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
             <Button variant="primary" size="md" onClick={handleOpenRecord}>
               <Plus className="w-3.5 h-3.5" />
-              <span>Record Payment</span>
+              <span>{t('payments.record')}</span>
             </Button>
           </>
         }
@@ -143,24 +144,24 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
       <TableShell>
         <div className="overflow-x-auto">
           <Table className="text-left border-collapse">
-            <caption className="sr-only">Payments register</caption>
+            <caption className="sr-only">{t('payments.caption')}</caption>
             <THead>
               <TR className="hover:bg-transparent">
-                <TH scope="col">Receipt Date</TH>
-                <TH scope="col">Against Invoice</TH>
-                <TH scope="col">Customer (Payer)</TH>
-                <TH scope="col">Payment Method</TH>
-                <TH scope="col">Reference / UTR</TH>
-                <TH scope="col" className="text-right">Amount Collected</TH>
-                <TH scope="col" className="text-center">Status</TH>
-                <TH scope="col" className="text-right px-4">Actions</TH>
+                <TH scope="col">{t('payments.thDate')}</TH>
+                <TH scope="col">{t('payments.thInvoice')}</TH>
+                <TH scope="col">{t('payments.thCustomer')}</TH>
+                <TH scope="col">{t('payments.thMethod')}</TH>
+                <TH scope="col">{t('payments.thRef')}</TH>
+                <TH scope="col" className="text-right">{t('payments.thAmount')}</TH>
+                <TH scope="col" className="text-center">{t('payments.thStatus')}</TH>
+                <TH scope="col" className="text-right px-4">{t('payments.thActions')}</TH>
               </TR>
             </THead>
             <TBody>
               {filteredPayments.length === 0 ? (
                 <tr>
                   <TD colSpan={8} className="py-8 text-center text-muted-foreground">
-                    No payment collections recorded.
+                    {t('payments.empty')}
                   </TD>
                 </tr>
               ) : (
@@ -183,12 +184,12 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                             <span>{inv.invoice_number}</span>
                           </button>
                         ) : (
-                          'Unknown Invoice'
+                          t('payments.unknownInvoice')
                         )}
                       </TD>
 
                       <TD className="font-sans">
-                        {inv?.customer_snapshot?.customer_name || 'N/A'}
+                        {inv?.customer_snapshot?.customer_name || t('common.na')}
                       </TD>
 
                       <TD>
@@ -196,7 +197,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                       </TD>
 
                       <TD className="text-muted-foreground">
-                        <div>{pay.reference_number || 'N/A'}</div>
+                        <div>{pay.reference_number || t('common.na')}</div>
                         {pay.notes && <div className="text-[10px] text-muted-foreground truncate max-w-xs">{pay.notes}</div>}
                       </TD>
 
@@ -214,8 +215,8 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
 
                       <TD className="text-right">
                         {!isCancelled && (
-                          <Button variant="ghost" size="sm" onClick={() => handleCancelPayment(pay.id)} title="Reverse or cancel this payment">
-                            Cancel
+                          <Button variant="ghost" size="sm" onClick={() => handleCancelPayment(pay.id)} title={t('payments.cancelTitle')}>
+                            {t('payments.cancelBtn')}
                           </Button>
                         )}
                       </TD>
@@ -232,8 +233,8 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
       <Modal
         isOpen={isRecordModalOpen}
         onClose={() => setIsRecordModalOpen(false)}
-        title="Record Invoice Payment Collection"
-        subtitle="Credits customer financial ledger and reduces invoice outstanding"
+        title={t('payments.modalTitle')}
+        subtitle={t('payments.modalSubtitle')}
         maxWidth="lg"
       >
         <form onSubmit={handleSavePayment} className="space-y-4 text-xs">
@@ -248,14 +249,14 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
 
           <div>
             <Label className="block mb-1">
-              Select Finalized Invoice with Outstanding Balance *
+              {t('payments.selectInvoice')}
             </Label>
             <Select
               value={formInvoiceId}
               onChange={(e) => handleSelectInvoiceInForm(e.target.value)}
               className="w-full font-mono"
             >
-              <option value="">-- Choose Invoice --</option>
+              <option value="">{t('payments.chooseInvoice')}</option>
               {finalizedInvoicesWithOutstanding.map((inv) => {
                 const { outstanding } = getInvoiceOutstanding(inv.id);
                 return (
@@ -270,13 +271,13 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
           {selectedInvOutstanding && (
             <div className="p-3 bg-muted border border-border rounded font-mono text-[11px] grid grid-cols-2 gap-2">
               <div>
-                <span className="text-muted-foreground">Invoice Total:</span>{' '}
+                <span className="text-muted-foreground">{t('payments.invoiceTotal')}</span>{' '}
                 <span className="font-semibold text-foreground">
                   {formatINR(invoices[formInvoiceId]?.grand_total || 0)}
                 </span>
               </div>
               <div>
-                <span className="text-muted-foreground">Remaining Outstanding:</span>{' '}
+                <span className="text-muted-foreground">{t('payments.remainingOutstanding')}</span>{' '}
                 <span className="font-bold text-amber-800 dark:text-amber-300">
                   {formatINR(selectedInvOutstanding.outstanding)}
                 </span>
@@ -286,7 +287,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label className="block mb-1">Amount Received (₹) *</Label>
+              <Label className="block mb-1">{t('payments.amount')}</Label>
               <Input
                 type="number"
                 step="0.01"
@@ -298,12 +299,12 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                 className="w-full font-mono font-bold"
               />
               <span className="text-[10px] text-muted-foreground">
-                Rule 35: Overpayment &gt; outstanding is disallowed
+                {t('payments.overpayRule')}
               </span>
             </div>
 
             <div>
-              <Label className="block mb-1">Payment Method</Label>
+              <Label className="block mb-1">{t('payments.method')}</Label>
               <Select
                 value={formMethod}
                 onChange={(e) => setFormMethod(e.target.value as PaymentMethod)}
@@ -320,7 +321,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label className="block mb-1">Receipt Date</Label>
+              <Label className="block mb-1">{t('payments.receiptDate')}</Label>
               <Input
                 type="date"
                 required
@@ -331,35 +332,35 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
             </div>
 
             <div>
-              <Label className="block mb-1">Transaction Ref / UTR / Cheque #</Label>
+              <Label className="block mb-1">{t('payments.refLabel')}</Label>
               <Input
                 type="text"
                 required
                 value={formReference}
                 onChange={(e) => setFormReference(e.target.value)}
                 className="w-full font-mono"
-                placeholder="e.g. UTR-HDFC2601992"
+                placeholder={t('payments.refPh')}
               />
             </div>
           </div>
 
           <div>
-            <Label className="block mb-1">Remittance Remarks / Notes</Label>
+            <Label className="block mb-1">{t('payments.notes')}</Label>
             <Input
               type="text"
               value={formNotes}
               onChange={(e) => setFormNotes(e.target.value)}
               className="w-full"
-              placeholder="e.g. RTGS settlement cleared from ICICI Bank"
+              placeholder={t('payments.notesPh')}
             />
           </div>
 
           <div className="flex justify-end gap-2 pt-3 border-t border-border">
             <Button type="button" variant="secondary" size="sm" onClick={() => setIsRecordModalOpen(false)}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button type="submit" variant="primary" size="sm">
-              Post Payment
+              {t('payments.post')}
             </Button>
           </div>
         </form>

@@ -10,6 +10,7 @@ import { Badge } from '../components/common/Badge';
 import { Modal } from '../components/common/Modal';
 import { Button, PageHeader, SearchInput, TableShell, Table, THead, TBody, TR, TH, TD } from '../components/ui';
 import { InvoicePrintView } from '../components/invoice/InvoicePrintView';
+import { useT } from '../i18n';
 
 interface InvoicesViewProps {
   selectedInvoiceId?: string | null;
@@ -22,6 +23,7 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
   onOpenPaymentModal,
   onNavigateToBilling
 }) => {
+  const { t } = useT();
   const {
     invoices,
     invoiceItems,
@@ -71,14 +73,14 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
     <div className="space-y-6">
       {/* Header & Controls */}
       <PageHeader
-        title="Invoices & Tax Register"
-        subtitle="Immutable snapshot preservation • Multi-tier GST taxation • Real-time receivables reconciliation"
+        title={t('invoices.title')}
+        subtitle={t('invoices.subtitle')}
         actions={
           <>
             <SearchInput
               icon={<Search className="w-4 h-4" />}
               type="text"
-              placeholder="Search invoice # or customer..."
+              placeholder={t('invoices.searchPh')}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
@@ -99,7 +101,7 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
             </div>
             {onNavigateToBilling && (
               <Button variant="primary" size="md" onClick={onNavigateToBilling}>
-                + Create Invoice
+                {t('invoices.create')}
               </Button>
             )}
           </>
@@ -110,24 +112,24 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
       <TableShell>
         <div className="overflow-x-auto">
           <Table className="text-left border-collapse">
-            <caption className="sr-only">Invoices register</caption>
+            <caption className="sr-only">{t('invoices.caption')}</caption>
             <THead>
               <TR className="hover:bg-transparent">
-                <TH scope="col" className="py-3">Invoice #</TH>
-                <TH scope="col">Date</TH>
-                <TH scope="col">Billed Customer (Snapshot)</TH>
-                <TH scope="col">Status</TH>
-                <TH scope="col" className="text-right">Grand Total</TH>
-                <TH scope="col" className="text-right">Amount Paid</TH>
-                <TH scope="col" className="text-right">Outstanding</TH>
-                <TH scope="col" className="text-right px-4">Actions</TH>
+                <TH scope="col" className="py-3">{t('invoices.thNumber')}</TH>
+                <TH scope="col">{t('invoices.thDate')}</TH>
+                <TH scope="col">{t('invoices.thCustomer')}</TH>
+                <TH scope="col">{t('invoices.thStatus')}</TH>
+                <TH scope="col" className="text-right">{t('invoices.thGrand')}</TH>
+                <TH scope="col" className="text-right">{t('invoices.thPaid')}</TH>
+                <TH scope="col" className="text-right">{t('invoices.thOutstanding')}</TH>
+                <TH scope="col" className="text-right px-4">{t('invoices.thActions')}</TH>
               </TR>
             </THead>
             <TBody>
               {filteredInvoices.length === 0 ? (
                 <tr>
                   <TD colSpan={8} className="py-8 text-center text-muted-foreground">
-                    No invoices match the selected filter.
+                    {t('invoices.empty')}
                   </TD>
                 </tr>
               ) : (
@@ -194,7 +196,7 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
                             variant="secondary"
                             size="icon"
                             onClick={() => setActiveInvoiceId(inv.id)}
-                            title="Preview / Print Tax Invoice"
+                            title={t('invoices.preview')}
                           >
                             <Eye className="w-3.5 h-3.5" />
                           </Button>
@@ -204,10 +206,10 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
                               variant="primary"
                               size="sm"
                               onClick={() => onOpenPaymentModal(inv.id)}
-                              title="Record payment collection"
+                              title={t('invoices.collectTitle')}
                               className="text-[11px] px-2 py-1"
                             >
-                              Collect
+                              {t('invoices.collect')}
                             </Button>
                           )}
                         </div>
@@ -226,8 +228,8 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
         <Modal
           isOpen={Boolean(activeInvoiceId)}
           onClose={() => setActiveInvoiceId(null)}
-          title={`Tax Invoice: ${activeInvoice.invoice_number}`}
-          subtitle={`Immutable Snapshot Data • Customer: ${activeInvoice.customer_snapshot.customer_name}`}
+          title={t('invoices.modalTitle', { number: activeInvoice.invoice_number })}
+          subtitle={t('invoices.modalSubtitle', { name: activeInvoice.customer_snapshot.customer_name })}
           maxWidth="full"
         >
           <InvoicePrintView

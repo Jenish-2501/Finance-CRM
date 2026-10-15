@@ -33,6 +33,7 @@ export interface BusinessSettings {
   currency: string;
   default_gst_rate: number; // e.g. 5 for 5% total (2.5% CGST + 2.5% SGST intra-state)
   state_code: string; // e.g. "24" for Gujarat to distinguish intra-state (CGST+SGST) vs inter-state (IGST)
+  logo_data?: string | null; // optional PNG/JPEG data URL printed as PDF watermark
   created_at: string;
   updated_at: string;
 }
@@ -51,6 +52,7 @@ export interface Customer {
   id: string;
   customer_name: string;
   customer_number: string; // searchable short code, unique (e.g. C-1001)
+  gujarati_name?: string | null; // optional Gujarati nickname (master-data only; legal docs use customer_name)
   pan: string;
   gst_number: string;
   mobile: string;

@@ -13,11 +13,11 @@ returns (no prefix, no FY link); the number lives once per document header.
 ## Counts
 - `docs.test.ts`: 6 passed (suggest-1, header linkage, global sharing dispatch→customer→return,
   multi-item single header, custom/duplicate scoping, no burn on failure).
-- `upgrade.test.ts`: 2 passed (v8→v14: 3 headers incl. collapsed multi-row, ids backfilled,
-  counter default, index live; v14 drops 5 logistics columns with quantities/refs/row count
+- `upgrade.test.ts`: 2 passed (v8→v15: 3 headers incl. collapsed multi-row, ids backfilled,
+  counter default, index live; v15 drops 5 logistics columns with quantities/refs/row count
   intact; UNIQUE rejects true dups, allows other customer/type).
 - Regressions: `tsc` (+unused), all vitest files, `test:db`, `test:m1`, `test:m2`,
-  `test:restore` green (version asserts bumped to v14).
+  `test:restore` green (version asserts bumped to v15).
 
 ## Commands
 - `npx vitest run tests/dispatch-documents`

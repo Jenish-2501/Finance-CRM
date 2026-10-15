@@ -40,7 +40,7 @@ export const PageHeader: React.FC<PageHeaderProps> = ({ title, subtitle, actions
 interface KpiCardProps {
   label: string;
   value: string;
-  sub?: string;
+  sub?: React.ReactNode;
   icon?: React.ReactNode;
   tone?: 'default' | 'success' | 'warning' | 'info' | 'primary';
   valueClassName?: string;

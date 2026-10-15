@@ -26,6 +26,7 @@ export const businessSettings = sqliteTable('business_settings', {
   currency: text('currency').notNull(),
   defaultGstRate: real('default_gst_rate').notNull(),
   stateCode: text('state_code').notNull(),
+  logoData: text('logo_data'), // optional PNG/JPEG data URL for PDF watermark (v17), null = none
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 });

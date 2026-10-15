@@ -17,6 +17,11 @@ import {
   createUom,
   setUomActive,
 } from '../services/businessService.js';
+import {
+  listLanguageOverrides,
+  saveLanguageOverrides,
+  resetLanguageOverrides,
+} from '../services/languageService.js';
 import { buildCapabilities, buildVersion } from '../utils/capabilities.js';
 import {
   assertRowWithId,
@@ -157,6 +162,16 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     const { id, is_active } = payload as { id: unknown; is_active: unknown };
     return setUomActive(id, is_active);
   });
+
+  // ---- Gujarati wording overrides (Language route under Settings) ----
+  // language:list returns the stored customizations as { "nav.dashboard": "…" }.
+  // language:save upserts a map (empty string = reset to bundled wording).
+  // language:reset clears one key ({ key }) or everything ('all' / { all: true }).
+  // Only unexpected storage failures throw; user-fixable input problems come
+  // back as { ok:false, error, message } envelopes.
+  safeHandler('language:list', () => listLanguageOverrides());
+  safeHandler('language:save', (data: unknown) => saveLanguageOverrides(data));
+  safeHandler('language:reset', (data: unknown) => resetLanguageOverrides(data));
 
   // ---- App identity + capabilities (main process is authoritative) ----
   safeHandler('app:get-version', () =>

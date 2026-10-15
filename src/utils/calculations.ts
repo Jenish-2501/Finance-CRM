@@ -5,6 +5,7 @@
 
 import {
   ProductUnit,
+  UnitOfMeasure,
   InvoicePayment
 } from '../types/database';
 
@@ -341,6 +342,33 @@ export function getFyForDate(isoDate: string): string {
 }
 
 /**
+ * PCS-first display quantity for a piece-mapped product.
+ * Ledger math always stays in primary units — this is display only: converts a
+ * primary-unit total into its PCS equivalent, or null when unmapped (caller
+ * renders the primary value as before). Unit codes render raw (universal).
+ */
+export function toPcsDisplayQty(
+  mapping: PieceWeightMapping | null,
+  primaryQty: number,
+  primaryUnitId: string,
+  productUnits: ProductUnit[]
+): number | null {
+  if (!mapping || !Number.isFinite(primaryQty)) return null;
+  return convertQuantity(primaryQty, primaryUnitId, mapping.pcsUnitId, productUnits);
+}
+
+/**
+ * Smart transfer-weight display for challans: kilograms once the weight hits
+ * 1000 gram, grams below. Keeps challan lines readable (750 gram, not
+ * 0.75 KG) while billing still works in KG.
+ */
+export function toDisplayWeight(totalGrams: number): { qty: number; unit: 'KG' | 'gram' } {
+  if (!Number.isFinite(totalGrams)) return { qty: totalGrams, unit: 'gram' };
+  if (totalGrams >= 1000) return { qty: roundCurrency(totalGrams / 1000), unit: 'KG' };
+  return { qty: roundCurrency(totalGrams), unit: 'gram' };
+}
+
+/**
  * Next free plain document number ("1", "2", … — no prefix, no FY link).
  * Only all-digit numbers participate in the scan (legacy codes like "CH-501"
  * stay valid but never shift the plain sequence); the stored floor keeps
@@ -366,6 +394,86 @@ export function suggestNextPlainNumber(
     candidate += 1;
   }
   return '';
+}
+
+/**
+ * Piece-weight mapping ("enter PCS, weight comes automatically").
+ *
+ * A weight-billed product (primary unit GRAM or KG) is piece-mapped when it
+ * carries a PCS row (conversion_to_primary = piece weight in PRIMARY units)
+ * plus, for GRAM-primary products, a KG row (factor 1000) used for KG billing
+ * and display. Challans are entered in PCS, stored in PCS, and billed in KG —
+ * all conversions flow through convertQuantity().
+ * Precision note: convertQuantity rounds to 2 decimals — exact in grams
+ * (0.01 g) but 10 g steps in kilograms. GRAM primary is exact; KG primary
+ * rounds stock to the nearest 10 g (warned in the UI, never blocked).
+ */
+export interface PieceWeightMapping {
+  gramsPerPiece: number;
+  pcsUnitId: string;
+  kgUnitId: string;
+}
+
+/** Grams-per-piece validity: finite, positive, sane upper bound. */
+export function isValidGramsPerPiece(value: unknown): value is number {
+  return (
+    typeof value === 'number' &&
+    Number.isFinite(value) &&
+    value > 0 &&
+    value <= 1000000
+  );
+}
+
+function findUnitIdByCode(
+  uoms: Record<string, UnitOfMeasure>,
+  code: string
+): string | null {
+  const needle = code.trim().toUpperCase();
+  for (const u of Object.values(uoms)) {
+    if ((u.code || '').trim().toUpperCase() === needle && u.is_active) {
+      return u.id;
+    }
+  }
+  return null;
+}
+
+/**
+ * Resolve the piece-weight mapping for a product, or null when unmapped.
+ * gramsPerPiece is always expressed in GRAMS (converted when primary is KG).
+ * Pure over its inputs — the store selector delegates to this (unit-testable).
+ */
+export function getPieceWeightMapping(
+  productUnits: ProductUnit[],
+  uoms: Record<string, UnitOfMeasure>,
+  primaryUnitId: string
+): PieceWeightMapping | null {
+  const primary = uoms[primaryUnitId];
+  const primaryCode = (primary?.code || '').trim().toUpperCase();
+  const primaryIsGram = primaryCode === 'GRAM';
+  const primaryIsKg = primaryCode === 'KG';
+  if (!primary || (!primaryIsGram && !primaryIsKg)) return null;
+  const pcsUnitId = findUnitIdByCode(uoms, 'PCS');
+  if (!pcsUnitId) return null;
+  const pcsRow = productUnits.find((pu) => pu.unit_id === pcsUnitId);
+  if (!pcsRow || !Number.isFinite(pcsRow.conversion_to_primary) || pcsRow.conversion_to_primary <= 0) {
+    return null;
+  }
+  if (primaryIsKg) {
+    // The primary row IS the KG row (factor 1, billing-flagged at creation).
+    const primaryRow = productUnits.find((pu) => pu.unit_id === primaryUnitId);
+    if (!primaryRow) return null;
+    const grams = roundCurrency(pcsRow.conversion_to_primary * 1000);
+    if (!isValidGramsPerPiece(grams)) return null;
+    return { gramsPerPiece: grams, pcsUnitId, kgUnitId: primaryUnitId };
+  }
+  const kgUnitId = findUnitIdByCode(uoms, 'KG');
+  if (!kgUnitId) return null;
+  const kgRow = productUnits.find((pu) => pu.unit_id === kgUnitId);
+  if (!kgRow || !Number.isFinite(kgRow.conversion_to_primary) || kgRow.conversion_to_primary <= 0) {
+    return null;
+  }
+  if (!isValidGramsPerPiece(pcsRow.conversion_to_primary)) return null;
+  return { gramsPerPiece: pcsRow.conversion_to_primary, pcsUnitId, kgUnitId };
 }
 
 /**

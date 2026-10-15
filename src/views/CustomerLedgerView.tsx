@@ -8,7 +8,9 @@ import {
   Download
 } from 'lucide-react';
 import { CustomerPicker, firstCustomerId } from '../components/common/CustomerPicker';
+import { PrintWatermark } from '../components/common/PrintWatermark';
 import { Button, Card, Input, Label, PageHeader } from '../components/ui';
+import { useT } from '../i18n';
 
 interface CustomerLedgerViewProps {
   initialCustomerId?: string;
@@ -19,6 +21,7 @@ export const CustomerLedgerView: React.FC<CustomerLedgerViewProps> = ({
   initialCustomerId = 'cust-1',
   onOpenInvoice
 }) => {
+  const { t } = useT();
   const { customers, getCustomerLedger, getCustomerOutstanding, businessSettings } =
     useAccountingStore();
 
@@ -77,17 +80,17 @@ export const CustomerLedgerView: React.FC<CustomerLedgerViewProps> = ({
       {/* Top Banner (hidden in print) */}
       <div className="no-print">
         <PageHeader
-          title="Customer Statement of Account"
-          subtitle="Strict financial ledger • Debit (Invoices) / Credit (Payments) with deterministic running balance"
+          title={t('ledger.title')}
+          subtitle={t('ledger.subtitle')}
           actions={
             <>
               <Button variant="secondary" size="sm" onClick={handleExportCSV}>
                 <Download className="w-3.5 h-3.5 text-muted-foreground" />
-                <span>Export CSV</span>
+                <span>{t('ledger.exportCsv')}</span>
               </Button>
               <Button variant="primary" size="md" onClick={handlePrint}>
                 <Printer className="w-3.5 h-3.5" />
-                <span>Print Statement</span>
+                <span>{t('ledger.print')}</span>
               </Button>
             </>
           }
@@ -99,7 +102,7 @@ export const CustomerLedgerView: React.FC<CustomerLedgerViewProps> = ({
         <div>
           <Label className="mb-1 flex items-center gap-1.5">
             <Building className="w-3.5 h-3.5 text-muted-foreground" />
-            Select Customer Account
+            {t('ledger.selectCustomer')}
           </Label>
           <CustomerPicker
             value={effectiveCustomerId}
@@ -111,7 +114,7 @@ export const CustomerLedgerView: React.FC<CustomerLedgerViewProps> = ({
         <div>
           <Label className="mb-1 flex items-center gap-1.5">
             <Calendar className="w-3.5 h-3.5 text-muted-foreground" />
-            Statement Date Range
+            {t('ledger.dateRange')}
           </Label>
           <div className="grid grid-cols-2 gap-2">
             <Input
@@ -131,7 +134,7 @@ export const CustomerLedgerView: React.FC<CustomerLedgerViewProps> = ({
 
         <div className="p-3 bg-muted border border-border rounded-md flex flex-col justify-center">
           <div className="text-[11px] text-muted-foreground uppercase tracking-wide font-semibold">
-            Current Outstanding Balance
+            {t('ledger.outstanding')}
           </div>
           <div className="text-xl font-bold font-mono text-foreground mt-0.5">
             {formatINR(currentOutstanding)}
@@ -141,6 +144,7 @@ export const CustomerLedgerView: React.FC<CustomerLedgerViewProps> = ({
 
       {/* Printable Statement Sheet */}
       <div className="print-container bg-card border border-border p-8 rounded-lg shadow-2xs space-y-6">
+        <PrintWatermark logoDataUrl={businessSettings.logo_data} />
         {/* Statement Header */}
         <div className="border-b-2 border-neutral-900 pb-5">
           <div className="flex justify-between items-start">

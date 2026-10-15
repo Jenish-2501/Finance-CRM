@@ -86,7 +86,7 @@ Dispatch documents (v9): one shared plain sequence for challans + returns — nu
 header-atomic with counter advance and per-customer+type duplicate rejection; challan print groups
 by document with legacy fallback. A row-level UNIQUE was proven unworkable (multi-row challans
 legitimately share numbers); grouping key == unique key makes the backfill inherently safe.
-Logistics capture removed (v14): vehicle/transporter/e-way/purpose/site-notes columns dropped
+Logistics capture removed (v15): vehicle/transporter/e-way/purpose/site-notes columns dropped
 from movements (other tables' notes untouched); dispatch/return forms, challan screen + PDF show
 place of supply only. Tests in `tests/dispatch-documents/`.
 No FIFO/average valuation — quantities only, no cost tracking (gap G3).
@@ -104,6 +104,8 @@ Dependencies: M01–M06, M16 (file export). Depended on by: M08 (shared totals).
 Files: `src/utils/pdfDocuments.ts` (buildInvoicePdf, buildChallanPdf, docToBase64, input interfaces),
 print views (`InvoicePrintView`, `DeliveryChallanPrintView` — `window.print` parity)
 Inputs: invoice+items+payments+allocations / challan movement → jsPDF document → base64 → `files:savePDFBytes`.
+Challan is a compact A6 grid (ruled header, full-width consignee box, bordered items grid
+with Weight column, fixed footer); header carries no GSTIN/PAN; layout locked by `tests/challan-pdf/`.
 Dependencies: M03, M06, M07, M16.
 
 ### M09 customers

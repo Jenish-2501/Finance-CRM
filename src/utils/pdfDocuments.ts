@@ -8,7 +8,7 @@ import {
   InvoiceItem,
   InvoicePayment
 } from '../types/database';
-import { formatINR, numberToWordsINR } from './calculations';
+import { formatINR, numberToWordsINR, toDisplayWeight } from './calculations';
 
 // ---------------------------------------------------------------------------
 // Ledger Counter PDF theme (mirrors DESIGN.md: ink-on-paper, mono figures)
@@ -36,24 +36,93 @@ const fmtDate = (iso?: string) => {
   return isNaN(d.getTime()) ? 'N/A' : d.toLocaleDateString();
 };
 
-function stampFooter(doc: jsPDF, left: string, right: string) {
+/** Address without a duplicated trailing city ("Ring Road surat" + "Surat"). Exported for screen parity. */
+export function formatAddress(address?: string, city?: string, state?: string, postal?: string): string {
+  let addr = str(address, '');
+  const c = str(city, '');
+  if (c && addr.toLowerCase().endsWith(c.toLowerCase())) {
+    addr = addr.slice(0, addr.length - c.length).trim().replace(/[,|-]\s*$/, '');
+  }
+  const cityState = [c, str(state, '')].filter(Boolean).join(', ');
+  const tail = [cityState, str(postal, '')].filter(Boolean).join(' - ');
+  return [addr, tail].filter(Boolean).join(', ');
+}
+
+function stampFooter(
+  doc: jsPDF,
+  left: string,
+  right: string,
+  page: { h: number; margin: number; width: number } = { h: 290, margin: MARGIN, width: PAGE_W },
+  extraLines: string[] = []
+) {
   const pages = doc.getNumberOfPages();
   for (let i = 1; i <= pages; i++) {
     doc.setPage(i);
     doc.setFont(SANS, 'normal');
+    doc.setFontSize(6.5);
+    doc.setTextColor(...MUTED);
+    extraLines.forEach((line, idx) => {
+      doc.text(line.substring(0, 95), page.margin, page.h - (extraLines.length - idx) * 3.5);
+    });
     doc.setFontSize(7.5);
     doc.setTextColor(...FAINT);
-    doc.text(left, MARGIN, 290);
-    doc.text(`${right}  |  Page ${i} of ${pages}`, PAGE_W - MARGIN, 290, { align: 'right' });
+    doc.text(left, page.margin, page.h);
+    const rightText = right ? `${right}  |  Page ${i} of ${pages}` : `Page ${i} of ${pages}`;
+    doc.text(rightText, page.width - page.margin, page.h, { align: 'right' });
   }
 }
 
-function sectionLabel(doc: jsPDF, text: string, y: number) {
+function sectionLabel(doc: jsPDF, text: string, y: number, margin: number = MARGIN) {
   doc.setFont(MONO, 'bold');
   doc.setFontSize(8);
   doc.setTextColor(...MUTED);
-  doc.text(text.toUpperCase(), MARGIN, y);
+  doc.text(text.toUpperCase(), margin, y);
   return y + 5;
+}
+
+// Bottom edge of the most recently drawn autoTable.
+function tableEndY(doc: jsPDF): number {
+  return (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY;
+}
+
+/**
+ * Brand watermark: the business logo, large and centred on every page at low
+ * opacity. Runs LAST on the finished document; at 8% opacity the text printed
+ * underneath stays fully readable. A corrupt/oversized logo can never break
+ * the document: every failure is swallowed.
+ */
+export function drawWatermark(
+  doc: jsPDF,
+  logoDataUrl: string | null | undefined,
+  pageW: number,
+  pageH: number
+): void {
+  if (!logoDataUrl || typeof logoDataUrl !== 'string') return;
+  const format = logoDataUrl.startsWith('data:image/jpeg') ? 'JPEG' : 'PNG';
+  try {
+    const props = doc.getImageProperties(logoDataUrl);
+    if (!props || !props.width || !props.height) return;
+    // Large but bounded: 62% of page width, and never taller than 40% of the
+    // page — aspect ratio always preserved.
+    let w = pageW * 0.62;
+    let h = (w * props.height) / props.width;
+    const maxH = pageH * 0.4;
+    if (h > maxH) {
+      h = maxH;
+      w = (h * props.width) / props.height;
+    }
+    const pages = doc.getNumberOfPages();
+    const GState = (doc as unknown as { GState: new (opts: { opacity: number }) => object }).GState;
+    for (let i = 1; i <= pages; i++) {
+      doc.setPage(i);
+      doc.saveGraphicsState();
+      doc.setGState(new GState({ opacity: 0.08 }));
+      doc.addImage(logoDataUrl, format, (pageW - w) / 2, (pageH - h) / 2, w, h);
+      doc.restoreGraphicsState();
+    }
+  } catch {
+    // A bad logo must never break a legal document.
+  }
 }
 
 function businessHeader(
@@ -66,60 +135,76 @@ function businessHeader(
     stamp: string;
     stampSub?: string;
     metaRight: Array<[string, string]>;
-  }
+  },
+  page: { width: number; margin: number; compact?: boolean; top?: number } = { width: PAGE_W, margin: MARGIN }
 ): number {
-  let y = 16;
+  const w = page.width;
+  const m = page.margin;
+  const compact = page.compact === true;
+  let y = page.top ?? 16;
   doc.setFont(SANS, 'bold');
-  doc.setFontSize(16);
+  doc.setFontSize(compact ? 12.5 : 16);
   doc.setTextColor(...INK);
-  doc.text(opts.name.toUpperCase().substring(0, 42), MARGIN, y);
-  y += 5.5;
+  doc.text(opts.name.toUpperCase().substring(0, 42), m, y);
+  y += compact ? 4.5 : 5.5;
   doc.setFont(SANS, 'normal');
-  doc.setFontSize(8.5);
+  doc.setFontSize(compact ? 8 : 8.5);
   doc.setTextColor(...MUTED);
-  doc.text(opts.sub.substring(0, 80), MARGIN, y);
-  y += 4.5;
-  doc.text(opts.address.substring(0, 95), MARGIN, y);
+  if (opts.sub) {
+    doc.text(opts.sub.substring(0, 80), m, y);
+    y += 4.5;
+  }
+  doc.text(opts.address.substring(0, 95), m, y);
   y += 4.5;
   doc.setFont(MONO, 'normal');
-  doc.setFontSize(8);
+  doc.setFontSize(compact ? 7.5 : 8);
   doc.setTextColor(...INK);
   for (const line of opts.metaLines) {
-    doc.text(line.substring(0, 95), MARGIN, y);
+    doc.text(line.substring(0, 95), m, y);
     y += 4;
   }
 
-  // Right stamp block
+  // Right stamp block: label optically centered both ways via middle baseline.
+  const stampW = compact ? 40 : 52;
+  const stampH = compact ? 7.5 : 9;
+  const stampTop = 14;
   doc.setFillColor(...INK);
-  doc.roundedRect(PAGE_W - MARGIN - 52, 14, 52, 9, 1.5, 1.5, 'F');
+  doc.roundedRect(w - m - stampW, stampTop, stampW, stampH, 1.5, 1.5, 'F');
   doc.setFont(MONO, 'bold');
-  doc.setFontSize(9);
+  doc.setFontSize(compact ? 8 : 9);
   doc.setTextColor(255, 255, 255);
-  doc.text(opts.stamp, PAGE_W - MARGIN - 26, 20.2, { align: 'center' });
-  let ry = 27;
+  doc.text(opts.stamp, w - m - stampW / 2, stampTop + stampH / 2, { align: 'center', baseline: 'middle' });
+  // Meta block hugs the stamp: no dead gap, even rhythm between rows.
+  let ry = stampTop + stampH + (compact ? 2.5 : 5.5);
   if (opts.stampSub) {
     doc.setFont(MONO, 'bold');
     doc.setFontSize(7.5);
     doc.setTextColor(...MUTED);
-    doc.text(opts.stampSub, PAGE_W - MARGIN, ry, { align: 'right' });
+    doc.text(opts.stampSub, w - m, ry, { align: 'right' });
     ry += 4.5;
   }
   doc.setFont(MONO, 'normal');
-  doc.setFontSize(8);
+  doc.setFontSize(compact ? 7.5 : 8);
+  // Compact mode: each label hugs its own value (measured per row) instead of
+  // labels pinned 62mm away — tight pairs, right edges aligned, never clipped.
   for (const [label, value] of opts.metaRight) {
+    const vText = value.substring(0, 34);
+    doc.setFont(MONO, 'bold');
+    const vW = compact ? doc.getTextWidth(vText) : 0;
     doc.setTextColor(...MUTED);
-    doc.text(label, PAGE_W - MARGIN - 62, ry, { align: 'right' });
+    doc.setFont(MONO, 'normal');
+    doc.text(label, compact ? w - m - vW - 2 : w - m - 62, ry, { align: 'right' });
     doc.setTextColor(...INK);
     doc.setFont(MONO, 'bold');
-    doc.text(value.substring(0, 34), PAGE_W - MARGIN, ry, { align: 'right' });
+    doc.text(vText, w - m, ry, { align: 'right' });
     doc.setFont(MONO, 'normal');
-    ry += 4.2;
+    ry += compact ? 3.4 : 4.2;
   }
 
   y = Math.max(y, ry) + 3;
   doc.setDrawColor(...INK);
   doc.setLineWidth(0.7);
-  doc.line(MARGIN, y, PAGE_W - MARGIN, y);
+  doc.line(m, y, w - m, y);
   return y + 6;
 }
 
@@ -164,17 +249,32 @@ export interface InvoicePdfInput {
   items: InvoiceItem[];
   payments: InvoicePayment[];
   allocations: Array<{ id: string; customer_inventory_movement_id: string; allocated_quantity: number }>;
+  /** Piece-mapped lines: total PCS per invoice item id, printed under the KG qty. */
+  pcsRef?: Record<string, number>;
+  /** Pre-formatted allocation audit lines (challan numbers, grouped). Used
+      verbatim when provided; otherwise falls back to raw movement ids. */
+  allocationLines?: string[];
+  /** Current business logo data URL (PNG/JPEG). Drawn as a centred watermark
+      on every page when present; snapshots stay frozen otherwise. */
+  logoDataUrl?: string;
 }
 
 export function buildInvoicePdf(input: InvoicePdfInput): jsPDF {
-  const { invoice, items, payments, allocations } = input;
+  const { invoice, items, payments, allocations, pcsRef } = input;
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   const biz = invoice.business_snapshot;
   const cust = invoice.customer_snapshot;
 
+  // Compact invoice header (same structure as the preview, denser metrics so
+  // 8-10 item lines still fit a single A4 page).
   let y = businessHeader(doc, {
-    name: str(biz.legal_name || biz.business_name, 'Business'),
-    sub: str(biz.business_name),
+    name: str(biz.business_name || biz.legal_name, 'Business'),
+    sub:
+      biz.legal_name &&
+      biz.legal_name.trim() &&
+      biz.legal_name.trim() !== (biz.business_name || '').trim()
+        ? biz.legal_name.trim()
+        : '',
     address: `${str(biz.address, '')} ${str(biz.city, '')}, ${str(biz.state, '')} - ${str(biz.postal_code, '')}`.trim(),
     metaLines: [
       `GSTIN: ${str(biz.gst_number)}  |  PAN: ${str(biz.pan)}`,
@@ -187,43 +287,46 @@ export function buildInvoicePdf(input: InvoicePdfInput): jsPDF {
       ['Billing Period:', `${str(invoice.billing_period_start, '-')} to ${str(invoice.billing_period_end, '-')}`],
       ['Place of Supply:', `${str(cust.state)} (${str(cust.state_code)})`]
     ]
-  });
+  }, { width: PAGE_W, margin: MARGIN, compact: true, top: 12 });
 
-  // Bill-to + allocations
-  y = sectionLabel(doc, 'Billed To (Customer Snapshot)', y);
-  doc.setFont(SANS, 'bold');
-  doc.setFontSize(10);
-  doc.setTextColor(...INK);
-  doc.text(str(cust.customer_name).substring(0, 60), MARGIN, y);
-  y += 5;
-  doc.setFont(SANS, 'normal');
-  doc.setFontSize(8.5);
-  doc.setTextColor(...MUTED);
+  // Bill-to + allocations: one ruled 2-column grid, mirroring the preview.
+  // Allocations flow as wrapped text (not one row per link) so invoices with
+  // many challan links still fit a single page.
   const custAddr = `${str(cust.address, '')} ${str(cust.city, '')}, ${str(cust.state, '')} - ${str(cust.postal_code, '')}`.trim();
-  doc.text(custAddr.substring(0, 100), MARGIN, y);
-  y += 4.5;
-  doc.setFont(MONO, 'normal');
-  doc.setFontSize(8);
-  doc.setTextColor(...INK);
-  doc.text(`GSTIN: ${str(cust.gst_number, 'N/A / Unregistered')}  |  PAN: ${str(cust.pan, 'N/A')}`, MARGIN, y);
-  y += 4;
-  doc.text(`Contact: ${str(cust.mobile, '-')} | ${str(cust.email, '-')}`.substring(0, 95), MARGIN, y);
-  y += 6;
+  const allocLines =
+    input.allocationLines && input.allocationLines.length > 0
+      ? input.allocationLines.join('\n')
+      : allocations.length === 0
+        ? 'Direct billed / No explicit dispatch links'
+        : allocations
+            .map((a) => `#${a.customer_inventory_movement_id}: ${a.allocated_quantity} units`)
+            .join(', ');
+  autoTable(doc, {
+    startY: y,
+    margin: { left: MARGIN, right: MARGIN },
+    head: [['BILLED TO (CUSTOMER SNAPSHOT)', 'INVENTORY ALLOCATION AUDIT LINK']],
+    body: [[
+      `${str(cust.customer_name)}\n${custAddr}\nGSTIN: ${str(cust.gst_number, 'N/A / Unregistered')}  |  PAN: ${str(cust.pan, 'N/A')}\nContact: ${str(cust.mobile, '-')} | ${str(cust.email, '-')}`,
+      `Explicitly allocated against customer inventory movements:\n${allocLines}`,
+    ]],
+    theme: 'grid',
+    styles: { font: SANS, fontSize: 7, textColor: INK, cellPadding: 1.5, lineColor: LINE, lineWidth: 0.25, valign: 'top' },
+    headStyles: { fontStyle: 'bold', fontSize: 6.5, textColor: [255, 255, 255], fillColor: INK },
+    columnStyles: { 0: { cellWidth: 112 }, 1: { cellWidth: 'auto' } },
+  });
+  y = tableEndY(doc) + 3;
 
-  if (allocations.length > 0) {
-    y = sectionLabel(doc, 'Inventory Allocation Audit Link', y);
-    doc.setFont(MONO, 'normal');
-    doc.setFontSize(7.5);
-    doc.setTextColor(...MUTED);
-    const refs = allocations
-      .map((a) => `#${a.customer_inventory_movement_id}: ${a.allocated_quantity} units`)
-      .join('   ');
-    const lines = doc.splitTextToSize(refs, PAGE_W - MARGIN * 2);
-    doc.text(lines, MARGIN, y);
-    y += lines.length * 3.8 + 3;
-  }
-
-  // Line items
+  // Line items: ruled Excel-style grid, dark header, strict numeric alignment.
+  const itemColumnStyles = {
+    0: { halign: 'center' as const, cellWidth: 8 },
+    2: { cellWidth: 16 },
+    3: { halign: 'right' as const, cellWidth: 14 },
+    4: { halign: 'right' as const, cellWidth: 11 },
+    5: { halign: 'right' as const, cellWidth: 22 },
+    6: { halign: 'right' as const, cellWidth: 24 },
+    7: { halign: 'center' as const, cellWidth: 10 },
+    8: { halign: 'right' as const, fontStyle: 'bold' as const, cellWidth: 26 },
+  };
   autoTable(doc, {
     startY: y,
     margin: { left: MARGIN, right: MARGIN },
@@ -232,92 +335,83 @@ export function buildInvoicePdf(input: InvoicePdfInput): jsPDF {
       String(idx + 1),
       str(it.product_name_snapshot),
       str(it.sku_snapshot),
-      String(it.quantity),
+      pcsRef?.[it.id] ? `${it.quantity}\n(≈ ${pcsRef[it.id]} PCS)` : String(it.quantity),
       str(it.uom_snapshot),
       rs(it.unit_price),
       rs(it.taxable_amount),
       `${it.gst_rate}%`,
       rs(it.line_total)
     ]),
-    theme: 'plain',
-    styles: { font: MONO, fontSize: 7.5, textColor: INK, cellPadding: 2 },
-    headStyles: { font: MONO, fontSize: 7.5, fontStyle: 'bold', textColor: MUTED, fillColor: WASH },
-    columnStyles: {
-      0: { halign: 'center', cellWidth: 8 },
-      3: { halign: 'right' },
-      4: { halign: 'right' },
-      5: { halign: 'right' },
-      6: { halign: 'right' },
-      7: { halign: 'right' },
-      8: { halign: 'right', fontStyle: 'bold' }
-    },
-    didDrawPage: () => {
-      doc.setFont(MONO, 'normal');
-      doc.setFontSize(7.5);
-      doc.setTextColor(...FAINT);
-    }
+    theme: 'grid',
+    styles: { font: MONO, fontSize: 6, textColor: INK, cellPadding: 1, lineColor: LINE, lineWidth: 0.25 },
+    headStyles: { font: MONO, fontSize: 6.5, fontStyle: 'bold', textColor: [255, 255, 255], fillColor: INK },
+    columnStyles: itemColumnStyles,
   });
-  y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 6;
+  y = tableEndY(doc) + 3;
 
-  // Totals
-  const totalRate = items.length > 0 ? items[0].gst_rate : 0;
-  const halfRate = totalRate / 2;
-  const totalRows: Array<[string, string, boolean?]> = [
-    ['Taxable Amount:', rs(invoice.taxable_amount), true]
-  ];
-  if (invoice.cgst > 0) totalRows.push([`CGST (${halfRate}%):`, rs(invoice.cgst)]);
-  if (invoice.sgst > 0) totalRows.push([`SGST (${halfRate}%):`, rs(invoice.sgst)]);
-  if (invoice.igst > 0) totalRows.push([`IGST (${totalRate}%, Inter-state):`, rs(invoice.igst)]);
-  if (invoice.other_charges > 0) totalRows.push(['Other / Freight Charges:', rs(invoice.other_charges)]);
-  y = totalsBlock(doc, y, totalRows, 'Grand Total:', rs(invoice.grand_total));
-
+  // Totals: same 9-column grid as the items table so every money figure
+  // aligns strictly under Line Total; grand total carried in a filled row.
   const activePayments = payments.filter((p) => p.status === 'ACTIVE');
   const totalPaid = activePayments.reduce((s, p) => s + p.amount, 0);
   const outstanding = invoice.status === 'CANCELLED' ? 0 : Math.max(0, invoice.grand_total - totalPaid);
-  doc.setFont(MONO, 'normal');
-  doc.setFontSize(8);
-  doc.setTextColor(4, 120, 87);
-  doc.text('Total Amount Paid:', 118, y);
-  doc.text(rs(totalPaid), PAGE_W - MARGIN, y, { align: 'right' });
-  y += 5;
-  doc.setTextColor(...INK);
-  doc.setFont(MONO, 'bold');
-  doc.text('Outstanding Balance:', 118, y);
-  doc.text(rs(outstanding), PAGE_W - MARGIN, y, { align: 'right' });
-  y += 7;
+  const totalRate = items.length > 0 ? items[0].gst_rate : 0;
+  const halfRate = totalRate / 2;
+  autoTable(doc, {
+    startY: y,
+    margin: { left: MARGIN, right: MARGIN },
+    body: [
+      [{ content: 'Taxable Amount:', colSpan: 8, styles: { halign: 'right' as const } }, rs(invoice.taxable_amount)],
+      ...(invoice.cgst > 0
+        ? [[{ content: `CGST (${halfRate}%):`, colSpan: 8, styles: { halign: 'right' as const } }, rs(invoice.cgst)]]
+        : []),
+      ...(invoice.sgst > 0
+        ? [[{ content: `SGST (${halfRate}%):`, colSpan: 8, styles: { halign: 'right' as const } }, rs(invoice.sgst)]]
+        : []),
+      ...(invoice.igst > 0
+        ? [[{ content: `IGST (${totalRate}%, Inter-state):`, colSpan: 8, styles: { halign: 'right' as const } }, rs(invoice.igst)]]
+        : []),
+      ...(invoice.other_charges > 0
+        ? [[{ content: 'Other / Freight Charges:', colSpan: 8, styles: { halign: 'right' as const } }, rs(invoice.other_charges)]]
+        : []),
+      [{ content: 'Grand Total:', colSpan: 8, styles: { halign: 'right' as const, fontStyle: 'bold' as const, fillColor: WASH } }, { content: rs(invoice.grand_total), styles: { fontStyle: 'bold' as const, fillColor: WASH } }],
+      [{ content: 'Total Amount Paid:', colSpan: 8, styles: { halign: 'right' as const } }, rs(totalPaid)],
+      [{ content: 'Outstanding Balance:', colSpan: 8, styles: { halign: 'right' as const, fontStyle: 'bold' as const } }, { content: rs(outstanding), styles: { fontStyle: 'bold' as const } }],
+    ],
+    theme: 'grid',
+    styles: { font: MONO, fontSize: 7, textColor: INK, cellPadding: 1.2, lineColor: LINE, lineWidth: 0.25 },
+    columnStyles: itemColumnStyles,
+  });
+  y = tableEndY(doc) + 3;
 
-  y = sectionLabel(doc, 'Amount In Words', y);
-  doc.setFont(SANS, 'bold');
-  doc.setFontSize(9);
-  doc.setTextColor(...INK);
-  const words = doc.splitTextToSize(numberToWordsINR(invoice.grand_total), PAGE_W - MARGIN * 2);
-  doc.text(words, MARGIN, y);
-  y += words.length * 4.5 + 3;
+  // Amount in words: ruled box, not floating text.
+  autoTable(doc, {
+    startY: y,
+    margin: { left: MARGIN, right: MARGIN },
+    body: [[`Amount in Words: ${numberToWordsINR(invoice.grand_total)}`]],
+    theme: 'grid',
+    styles: { font: SANS, fontSize: 7.5, fontStyle: 'bold', textColor: INK, cellPadding: 2, lineColor: LINE, lineWidth: 0.25 },
+  });
+  y = tableEndY(doc) + 3;
 
-  // Bank + notes
+  // Bank + notes: ruled label/value grid.
   const bank = invoice.bank_snapshot;
-  y = sectionLabel(doc, 'Bank Remittance Details (Persisted Snapshot)', y);
-  doc.setFont(MONO, 'normal');
-  doc.setFontSize(8);
-  doc.setTextColor(...INK);
-  for (const line of [
-    `Bank Name: ${str(bank.bank_name)}`,
-    `A/C Number: ${str(bank.bank_account_number)}`,
-    `IFSC Code: ${str(bank.ifsc)}`,
-    `Branch: ${str(bank.branch)}`
-  ]) {
-    doc.text(line.substring(0, 90), MARGIN, y);
-    y += 4;
-  }
-  y += 1;
-  if (invoice.notes) {
-    doc.setFont(SANS, 'italic');
-    doc.setFontSize(8.5);
-    doc.setTextColor(...MUTED);
-    const noteLines = doc.splitTextToSize(`Notes: ${invoice.notes}`, PAGE_W - MARGIN * 2);
-    doc.text(noteLines, MARGIN, y);
-    y += noteLines.length * 4 + 3;
-  }
+  autoTable(doc, {
+    startY: y,
+    margin: { left: MARGIN, right: MARGIN },
+    head: [['BANK REMITTANCE DETAILS (PERSISTED SNAPSHOT)', '']],
+    body: [
+      ['Bank Name', str(bank.bank_name)],
+      ['A/C Number', str(bank.bank_account_number)],
+      ['IFSC Code', str(bank.ifsc)],
+      ['Branch', str(bank.branch)],
+      ...(invoice.notes ? [[{ content: 'Notes', styles: { fontStyle: 'italic' as const } }, invoice.notes]] : []),
+    ],
+    theme: 'grid',
+    styles: { font: MONO, fontSize: 7, textColor: INK, cellPadding: 1.2, lineColor: LINE, lineWidth: 0.25 },
+    headStyles: { fontStyle: 'bold', fontSize: 7, textColor: [255, 255, 255], fillColor: INK },
+    columnStyles: { 0: { cellWidth: 62 }, 1: { cellWidth: 'auto' } },
+  });
+  y = tableEndY(doc) + 3;
 
   if (activePayments.length > 0) {
     y = sectionLabel(doc, 'Payment Receipts Applied Against This Invoice', y);
@@ -331,12 +425,12 @@ export function buildInvoicePdf(input: InvoicePdfInput): jsPDF {
         `#${str(p.reference_number)}`,
         rs(p.amount)
       ]),
-      theme: 'plain',
-      styles: { font: MONO, fontSize: 7.5, textColor: INK, cellPadding: 1.8 },
-      headStyles: { fontStyle: 'bold', textColor: MUTED, fillColor: WASH },
+      theme: 'grid',
+      styles: { font: MONO, fontSize: 7, textColor: INK, cellPadding: 1.5, lineColor: LINE, lineWidth: 0.25 },
+      headStyles: { fontStyle: 'bold', textColor: [255, 255, 255], fillColor: INK },
       columnStyles: { 3: { halign: 'right', fontStyle: 'bold' } }
     });
-    y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 6;
+    y = tableEndY(doc) + 3;
   }
 
   // Footer sign-off
@@ -356,6 +450,7 @@ export function buildInvoicePdf(input: InvoicePdfInput): jsPDF {
   doc.text(str(biz.business_name).substring(0, 40), PAGE_W - MARGIN, y + 12, { align: 'right' });
 
   stampFooter(doc, 'AccuLedger - Tax Invoice', str(invoice.invoice_number));
+  drawWatermark(doc, input.logoDataUrl, 210, 297);
   return doc;
 }
 
@@ -371,6 +466,11 @@ export interface ChallanPdfInput {
   copyLabel: string;
   challanDate: string;
   timeOfRemoval: string;
+  /** 'dispatch' (company → customer) or 'return' (customer → company). */
+  direction?: 'dispatch' | 'return';
+  /** Current business logo data URL (PNG/JPEG). Drawn as a centred watermark
+      on every page when present. */
+  logoDataUrl?: string;
   itemRows: Array<{
     sNo: number;
     productName: string;
@@ -378,144 +478,266 @@ export interface ChallanPdfInput {
     sku: string;
     quantity: number;
     unitCode: string;
-    indicativePrice: number;
-    lineTotal: number;
+    weightQty?: number;
+    weightUom?: 'KG' | 'gram';
   }>;
   totalQuantity: number;
-  totalIndicativeVal: number;
+  totalWeightGrams: number;
 }
 
 export function buildChallanPdf(input: ChallanPdfInput): jsPDF {
   const { business: biz, customer: cust, primaryMovement: mov, itemRows } = input;
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const isReturn = input.direction === 'return';
+  const totalWeightShown = toDisplayWeight(input.totalWeightGrams);
+  // Compact A6 with ruled grid tables: header block, full-width consignee box,
+  // bordered items grid with a dedicated Weight column, totals, signatures.
+  const W = 105;
+  const M = 8;
+  const doc = new jsPDF({ unit: 'mm', format: 'a6' });
 
-  let y = businessHeader(doc, {
-    name: str(biz.business_name, 'Business'),
-    sub: str(biz.legal_name),
-    address: `${str(biz.address, '')} ${str(biz.city, '')}, ${str(biz.state, '')} - ${str(biz.postal_code, '')}, India`.trim(),
-    metaLines: [
-      `GSTIN: ${str(biz.gst_number)}  |  PAN: ${str(biz.pan)}`,
-      `State Code: ${str(biz.state_code)} (${str(biz.state)})`
-    ],
-    stamp: 'DELIVERY CHALLAN',
-    stampSub: `[ ${input.copyLabel} ]`,
-    metaRight: [
-      ['Challan Number:', str(mov.reference_id)],
-      ['Challan Date:', str(input.challanDate)],
-      ['Time of Removal:', str(input.timeOfRemoval)],
-    ]
-  });
-
-  // Consignor / consignee
-  y = sectionLabel(doc, 'Consignor (Dispatched From)  |  Consignee (Dispatched To)', y);
+  // ---- Header: business name left, stamp + meta right, double rule below ----
+  // Address + contact live in the footer, not the header.
+  // (No GSTIN/PAN here — those live on the tax invoice, not the challan.)
+  let y = 10;
   doc.setFont(SANS, 'bold');
-  doc.setFontSize(9);
+  doc.setFontSize(12.5);
   doc.setTextColor(...INK);
-  doc.text(str(biz.business_name).substring(0, 45), MARGIN, y);
-  doc.text(str(cust.customer_name).substring(0, 45), 110, y);
-  y += 4.5;
-  doc.setFont(SANS, 'normal');
-  doc.setFontSize(8);
-  doc.setTextColor(...MUTED);
-  doc.text(`${str(biz.city, '')}, ${str(biz.state, '')} | GSTIN ${str(biz.gst_number)}`.substring(0, 48), MARGIN, y);
-  doc.text(`${str(cust.city, '')}, ${str(cust.state, '')} | GSTIN ${str(cust.gst_number, 'Unregistered')}`.substring(0, 48), 110, y);
-  y += 4.5;
-  doc.text(`Contact: ${str(biz.phone, '-')} | ${str(biz.email, '-')}`.substring(0, 48), MARGIN, y);
-  doc.text(`Contact: ${str(cust.mobile, '-')}`.substring(0, 48), 110, y);
-  y += 7;
+  doc.text(str(biz.business_name, 'Business').toUpperCase().substring(0, 30), M, y);
+  y += 5;
 
-  // Place of supply (transport capture removed — challans carry no logistics data)
-  y = sectionLabel(doc, 'Place of Supply', y);
+  const stampTop = 8;
+  const stampW = 40;
+  const stampH = 7.5;
+  doc.setFillColor(...INK);
+  doc.roundedRect(W - M - stampW, stampTop, stampW, stampH, 1.5, 1.5, 'F');
   doc.setFont(MONO, 'bold');
   doc.setFontSize(8);
-  doc.setTextColor(...INK);
-  doc.text(`${str(cust.city, '')}, ${str(cust.state, '')}`.substring(0, 60), MARGIN, y);
-  y += 9;
+  doc.setTextColor(255, 255, 255);
+  // Vertically centered: baseline sits half the cap height below the middle.
+  const stampFsMm = 8 * 0.3528;
+  doc.text(isReturn ? 'RETURN CHALLAN' : 'DELIVERY CHALLAN', W - M - stampW / 2, stampTop + stampH / 2 + stampFsMm * 0.35, { align: 'center' });
+  let ry = stampTop + stampH + 3;
+  doc.setFont(MONO, 'bold');
+  doc.setFontSize(7.5);
+  doc.setTextColor(...MUTED);
+  doc.text(str(input.copyLabel), W - M, ry, { align: 'right' });
+  ry += 4.5;
+  doc.setFontSize(7.5);
+  const metaRight: Array<[string, string]> = [
+    ['Challan Number:', str(mov.reference_id)],
+    ['Challan Date:', str(input.challanDate)],
+    ['Time of Removal:', str(input.timeOfRemoval)],
+  ];
+  for (const [label, value] of metaRight) {
+    doc.setFont(MONO, 'normal');
+    doc.setTextColor(...MUTED);
+    doc.text(label, W - M - 38, ry, { align: 'right' });
+    doc.setFont(MONO, 'bold');
+    doc.setTextColor(...INK);
+    doc.text(value.substring(0, 22), W - M, ry, { align: 'right' });
+    ry += 3.8;
+  }
 
-  // Items
+  y = Math.max(y, ry) + 3;
+  doc.setDrawColor(...INK);
+  doc.setLineWidth(0.7);
+  doc.line(M, y, W - M, y);
+  doc.setLineWidth(0.25);
+  doc.line(M, y + 1.2, W - M, y + 1.2);
+  y += 7;
+
+  // ---- Consignee: full-width ruled box (consignor already sits in the header) ----
+  const custContact = str(cust.mobile, '');
   autoTable(doc, {
     startY: y,
-    margin: { left: MARGIN, right: MARGIN },
-      head: [['#', 'Description of Goods', 'SKU', 'Qty', 'UOM', 'Agreed Rate', 'Total Value (Rs.)']],
+    margin: { left: M, right: M },
+    head: [[isReturn ? 'RETURNED FROM (CUSTOMER SITE)' : 'CONSIGNEE (DISPATCHED TO)']],
+    body: [[
+      `${str(cust.customer_name)}\n${formatAddress(cust.address, cust.city, cust.state, cust.postal_code)}${custContact ? `\nContact: ${custContact}` : ''}`,
+    ]],
+    theme: 'grid',
+    styles: { font: SANS, fontSize: 7.5, textColor: INK, cellPadding: 2.5, lineColor: LINE, lineWidth: 0.25, valign: 'top' },
+    headStyles: { fontStyle: 'bold', fontSize: 7, textColor: [255, 255, 255], fillColor: INK },
+  });
+  y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 4;
+
+  // Items grid with a dedicated Weight column (consistent on every row).
+  autoTable(doc, {
+    startY: y,
+    margin: { left: M, right: M },
+    head: [['#', 'Description of Goods', 'SKU', 'Qty', 'UOM', 'Weight']],
     body: itemRows.map((r) => [
       String(r.sNo),
       r.description ? `${r.productName} - ${r.description}` : r.productName,
       r.sku,
       String(r.quantity),
       r.unitCode,
-      rs(r.indicativePrice),
-      rs(r.lineTotal)
+      r.weightQty !== undefined && r.weightUom ? `${r.weightQty} ${r.weightUom}` : '-',
     ]),
-    foot: [[
-      { content: 'Total Dispatched Quantity & Value:', colSpan: 3, styles: { halign: 'right', fontStyle: 'bold' } },
-      String(input.totalQuantity),
-      'Units',
-      '',
-      rs(input.totalIndicativeVal)
-    ]],
-    theme: 'plain',
-    styles: { font: MONO, fontSize: 7.5, textColor: INK, cellPadding: 2 },
-    headStyles: { fontStyle: 'bold', textColor: MUTED, fillColor: WASH },
+    foot: [
+      [
+        { content: 'Total Dispatched Quantity:', colSpan: 3, styles: { halign: 'right', fontStyle: 'bold' } },
+        String(input.totalQuantity),
+        'Units',
+        input.totalWeightGrams > 0 ? `${totalWeightShown.qty} ${totalWeightShown.unit}` : '-',
+      ],
+    ],
+    theme: 'grid',
+    styles: { font: MONO, fontSize: 6, textColor: INK, cellPadding: 0.8, lineColor: LINE, lineWidth: 0.25 },
+    headStyles: { fontStyle: 'bold', fontSize: 6, textColor: [255, 255, 255], fillColor: INK },
     footStyles: { fontStyle: 'bold', textColor: INK, fillColor: WASH },
     columnStyles: {
-      0: { halign: 'center', cellWidth: 8 },
-      3: { halign: 'right', fontStyle: 'bold' },
-      4: { halign: 'right' },
-      5: { halign: 'right' },
-      6: { halign: 'right', fontStyle: 'bold' }
+      0: { halign: 'center', cellWidth: 7 },
+      2: { cellWidth: 18 },
+      3: { halign: 'right', fontStyle: 'bold', cellWidth: 12 },
+      4: { halign: 'left', cellWidth: 14 },
+      5: { halign: 'right', cellWidth: 20 },
     }
   });
-  y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 6;
+  y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 4;
 
-  // Valuation + statutory notice
-  y = sectionLabel(doc, 'Agreed Value In Words', y);
-  doc.setFont(SANS, 'bold');
-  doc.setFontSize(9);
-  doc.setTextColor(...INK);
-  const words = doc.splitTextToSize(numberToWordsINR(input.totalIndicativeVal), PAGE_W - MARGIN * 2);
-  doc.text(words, MARGIN, y);
-  y += words.length * 4.5 + 3;
+  // Signatures (receiver + consignor only — no transporter block)
+  if (y > 118) {
+    doc.addPage();
+    y = 10;
+  }
+  y = sectionLabel(doc, 'Signatures & Acknowledgment', y, M);
+  const sigW = (W - M * 2 - 4) / 2;
+  const sigs: Array<[string, string]> = [
+    ["Receiver's Acknowledgment & Stamp", 'Received goods in sound order'],
+    ['Authorised Signatory (Consignor)', str(isReturn ? cust.customer_name : biz.business_name).substring(0, 30)]
+  ];
+  sigs.forEach(([title, sub], i) => {
+    const sx = M + i * (sigW + 4);
+    doc.setDrawColor(...LINE);
+    doc.setLineWidth(0.3);
+    doc.rect(sx, y, sigW, 18);
+    doc.setFont(SANS, 'bold');
+    doc.setFontSize(7);
+    doc.setTextColor(...INK);
+    const titleLines = doc.splitTextToSize(title, sigW - 4);
+    doc.text(titleLines, sx + 2, y + 4);
+    doc.setDrawColor(...FAINT);
+    doc.line(sx + 6, y + 13.5, sx + sigW - 6, y + 13.5);
+    doc.setFont(SANS, 'normal');
+    doc.setFontSize(6.5);
+    doc.setTextColor(...MUTED);
+    doc.text(sub.substring(0, 32), sx + 2, y + 16.5);
+  });
+
+  const footerPhone = str(biz.phone, '');
+  const footerExtras = [
+    formatAddress(biz.address, biz.city, biz.state, biz.postal_code ? `${biz.postal_code}, India` : 'India'),
+    ...(footerPhone ? [`Contact: ${footerPhone}`] : []),
+  ];
+  stampFooter(doc, `AccuLedger - ${isReturn ? 'Return' : 'Delivery'} Challan ${str(mov.reference_id)}`, '', { h: 141, margin: M, width: W }, footerExtras);
+  drawWatermark(doc, input.logoDataUrl, 105, 148);
+  return doc;
+}
+
+// ---------------------------------------------------------------------------
+// CUSTOMER MOVEMENT LEDGER (deliveries + returns, client-shareable statement)
+// ---------------------------------------------------------------------------
+export interface MovementLedgerPdfInput {
+  business: BusinessSettings;
+  customerName: string;
+  customerMeta: string;
+  periodLabel: string;
+  rows: Array<{
+    date: string;
+    docNo: string;
+    type: string;
+    productName: string;
+    qty: string;
+    unitCode: string;
+    weight: string;
+  }>;
+  totals: Array<{
+    productName: string;
+    dispatched: string;
+    returned: string;
+    net: string;
+    unitCode: string;
+    netWeight: string;
+  }>;
+  /** Current business logo data URL (PNG/JPEG). Drawn as a centred watermark
+      on every page when present. */
+  logoDataUrl?: string;
+}
+
+export function buildMovementLedgerPdf(input: MovementLedgerPdfInput): jsPDF {
+  const { business: biz } = input;
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const bizPhone = str(biz.phone, '');
+
+  let y = businessHeader(doc, {
+    name: str(biz.business_name, 'Business'),
+    sub: '',
+    address: `${str(biz.address, '')} ${str(biz.city, '')}, ${str(biz.state, '')} - ${str(biz.postal_code, '')}, India`.trim(),
+    metaLines: bizPhone ? [`Contact: ${bizPhone}`] : [],
+    stamp: 'MOVEMENT LEDGER',
+    metaRight: [
+      ['Customer:', str(input.customerName).substring(0, 30)],
+      ['Period:', str(input.periodLabel).substring(0, 30)],
+    ]
+  }, { width: PAGE_W, margin: MARGIN, compact: true, top: 12 });
+
+  y = sectionLabel(doc, `Customer: ${str(input.customerName).substring(0, 50)}  |  ${str(input.customerMeta).substring(0, 60)}`, y);
   doc.setFont(SANS, 'normal');
   doc.setFontSize(7.5);
   doc.setTextColor(...MUTED);
-  const decl = doc.splitTextToSize(
-    'Statutory Declaration (Rule 55): This Delivery Challan is issued under Rule 55 of the Central Goods and Services Tax (CGST) Rules, 2017 for transfer of goods to the customer site on a consignment/holding basis. THIS DOCUMENT DOES NOT CONSTITUTE A TAX INVOICE OR SALE OF GOODS. Ownership and risk remain with the consignor until a formal tax invoice is generated.',
-    PAGE_W - MARGIN * 2
-  );
-  doc.text(decl, MARGIN, y);
-  y += decl.length * 3.6 + 6;
+  y += 1;
 
-  // Signatures
-  if (y > 250) {
-    doc.addPage();
-    y = 16;
-  }
-  y = sectionLabel(doc, 'Signatures & Acknowledgment', y);
-  const sigW = (PAGE_W - MARGIN * 2 - 8) / 3;
-  const sigs: Array<[string, string]> = [
-    ["Receiver's Acknowledgment & Stamp", 'Received goods in sound order'],
-    ["Transporter's Signature", 'Accepted material for safe carriage'],
-    ['Authorised Signatory (Consignor)', str(biz.business_name).substring(0, 30)]
-  ];
-  sigs.forEach(([title, sub], i) => {
-    const sx = MARGIN + i * (sigW + 4);
-    doc.setDrawColor(...LINE);
-    doc.setLineWidth(0.3);
-    doc.rect(sx, y, sigW, 26);
-    doc.setFont(SANS, 'bold');
-    doc.setFontSize(7.5);
-    doc.setTextColor(...INK);
-    const titleLines = doc.splitTextToSize(title, sigW - 4);
-    doc.text(titleLines, sx + 2, y + 5);
-    doc.setDrawColor(...FAINT);
-    doc.line(sx + 6, y + 19, sx + sigW - 6, y + 19);
-    doc.setFont(SANS, 'normal');
-    doc.setFontSize(7);
-    doc.setTextColor(...MUTED);
-    doc.text(sub.substring(0, 32), sx + 2, y + 23.5);
+  autoTable(doc, {
+    startY: y,
+    margin: { left: MARGIN, right: MARGIN },
+    head: [['Date', 'Challan / Slip No.', 'Type', 'Product', 'Qty', 'UOM', 'Weight']],
+    body: input.rows.length > 0
+      ? input.rows.map((r) => [r.date, r.docNo, r.type, r.productName, r.qty, r.unitCode, r.weight])
+      : [['', '', '', 'No movements in the selected period', '', '', '']],
+    theme: 'grid',
+    styles: { font: MONO, fontSize: 7.5, textColor: INK, cellPadding: 1.8, lineColor: LINE, lineWidth: 0.25 },
+    headStyles: { fontStyle: 'bold', textColor: [255, 255, 255], fillColor: INK },
+    columnStyles: {
+      0: { cellWidth: 22 },
+      1: { cellWidth: 26 },
+      2: { cellWidth: 22 },
+      4: { halign: 'right', fontStyle: 'bold' },
+      5: { halign: 'left' },
+      6: { halign: 'right' }
+    }
   });
+  y = tableEndY(doc) + 6;
 
-  stampFooter(doc, 'AccuLedger - Delivery Challan', str(mov.reference_id));
+  if (input.totals.length > 0) {
+    y = sectionLabel(doc, 'Product-wise Totals', y);
+    autoTable(doc, {
+      startY: y,
+      margin: { left: MARGIN, right: MARGIN },
+      head: [['Product', 'Dispatched', 'Returned', 'Net Held', 'Unit', 'Net Weight']],
+      body: input.totals.map((x) => [
+        x.productName, x.dispatched, x.returned, x.net, x.unitCode, x.netWeight
+      ]),
+      theme: 'grid',
+      styles: { font: MONO, fontSize: 7.5, textColor: INK, cellPadding: 1.8, lineColor: LINE, lineWidth: 0.25 },
+      headStyles: { fontStyle: 'bold', textColor: [255, 255, 255], fillColor: INK },
+      footStyles: { fontStyle: 'bold', textColor: INK, fillColor: WASH },
+      columnStyles: {
+        1: { halign: 'right' },
+        2: { halign: 'right' },
+        3: { halign: 'right', fontStyle: 'bold' },
+        5: { halign: 'right' }
+      }
+    });
+    y = tableEndY(doc) + 6;
+  }
+
+  const footerExtras = [
+    formatAddress(biz.address, biz.city, biz.state, biz.postal_code ? `${biz.postal_code}, India` : 'India'),
+    ...(bizPhone ? [`Contact: ${bizPhone}`] : []),
+  ];
+  stampFooter(doc, `AccuLedger - Movement Ledger ${str(input.customerName).substring(0, 30)}`, '', { h: 290, margin: MARGIN, width: PAGE_W }, footerExtras);
+  drawWatermark(doc, input.logoDataUrl, 210, 297);
   return doc;
 }
 

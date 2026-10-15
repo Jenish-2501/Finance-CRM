@@ -1,31 +1,37 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAccountingStore } from '../../store/accountingStore';
-import { formatINR, numberToWordsINR, roundCurrency, getCustomerStateCode } from '../../utils/calculations';
-import { buildChallanPdf, docToBase64 } from '../../utils/pdfDocuments';
+import { roundCurrency, toDisplayWeight } from '../../utils/calculations';
+import { buildChallanPdf, docToBase64, formatAddress } from '../../utils/pdfDocuments';
 import { Printer, X, Download, RefreshCw } from 'lucide-react';
 import { Badge } from '../common/Badge';
+import { PrintWatermark } from '../common/PrintWatermark';
 import { Alert, Button, Card, Input, Label, Select, Toolbar } from '../ui';
+import { useT } from '../../i18n';
 
 export type ChallanCopyType = 'ORIGINAL' | 'DUPLICATE' | 'TRIPLICATE';
 
 interface DeliveryChallanPrintViewProps {
   movementId?: string;
   challanReference?: string;
+  /** 'dispatch' (company → customer) or 'return' (customer → company). */
+  direction?: 'dispatch' | 'return';
   onClose?: () => void;
 }
 
 export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> = ({
   movementId,
   challanReference,
+  direction = 'dispatch',
   onClose
 }) => {
+  const { t } = useT();
   const {
     businessSettings,
     customers,
     products,
     uoms,
     customerInventoryMovements,
-    resolvePriceForCustomer
+    getPieceWeightMapping
   } = useAccountingStore();
 
   const [copyType, setCopyType] = useState<ChallanCopyType>('ORIGINAL');
@@ -34,6 +40,11 @@ export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> =
   // Grouping key is the document header when present (one document = one challan,
   // even across rows); legacy rows without a header fall back to the old
   // (customer, reference) grouping so history still prints.
+  // Return slips filter RETURN movements; dispatch slips filter DISPATCH ones —
+  // this also disambiguates shared challan numbers across the two sequences.
+  const isReturn = direction === 'return';
+  const wantType = (t: string): boolean =>
+    isReturn ? t === 'RETURN' : t === 'DISPATCH' || t === 'ADJUSTMENT_IN';
   const movements = useMemo(() => {
     const allMovs = Object.values(customerInventoryMovements);
     const keyOf = (m: (typeof allMovs)[number]) =>
@@ -42,33 +53,22 @@ export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> =
       const target = customerInventoryMovements[movementId];
       if (target) {
         const key = keyOf(target);
-        const grouped = allMovs.filter(
-          (m) =>
-            keyOf(m) === key &&
-            (m.movement_type === 'DISPATCH' || m.movement_type === 'ADJUSTMENT_IN')
-        );
+        const grouped = allMovs.filter((m) => keyOf(m) === key && wantType(m.movement_type));
         return grouped.length > 0 ? grouped : [target];
       }
     }
     if (challanReference) {
-      const matches = allMovs.filter(
-        (m) =>
-          m.reference_id === challanReference &&
-          (m.movement_type === 'DISPATCH' || m.movement_type === 'ADJUSTMENT_IN')
-      );
+      const matches = allMovs.filter((m) => m.reference_id === challanReference && wantType(m.movement_type));
       if (matches.length > 0) {
         const key = keyOf(matches[0]);
-        return allMovs.filter(
-          (m) =>
-            keyOf(m) === key &&
-            (m.movement_type === 'DISPATCH' || m.movement_type === 'ADJUSTMENT_IN')
-        );
+        return allMovs.filter((m) => keyOf(m) === key && wantType(m.movement_type));
       }
     }
-    // Fallback: newest dispatch
-    const dispatches = allMovs.filter((m) => m.movement_type === 'DISPATCH');
-    return dispatches.length > 0 ? [dispatches[dispatches.length - 1]] : [];
-  }, [movementId, challanReference, customerInventoryMovements]);
+    // Fallback: newest movement of the wanted type
+    const wanted = allMovs.filter((m) => wantType(m.movement_type));
+    return wanted.length > 0 ? [wanted[wanted.length - 1]] : [];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [movementId, challanReference, direction, customerInventoryMovements]);
 
   const primaryMovement = movements[0];
   const customer = primaryMovement ? customers[primaryMovement.customer_id] : null;
@@ -186,7 +186,7 @@ export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> =
   const handleDownloadPDF = async () => {
     if (!primaryMovement || !customer) return;
     const safeRef = (primaryMovement.reference_id || 'challan').replace(/[^a-z0-9-_]+/gi, '-');
-    const filename = `Challan-${safeRef}-${copyType}.pdf`;
+    const filename = `${isReturn ? 'Return' : 'Challan'}-${safeRef}-${copyType}.pdf`;
     const doc = buildChallanPdf({
       business: businessSettings,
       customer,
@@ -194,9 +194,11 @@ export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> =
       copyLabel: copyLabels[copyType],
       challanDate,
       timeOfRemoval,
+      direction,
       itemRows,
       totalQuantity,
-      totalIndicativeVal
+      totalWeightGrams,
+      logoDataUrl: businessSettings.logo_data ?? undefined
     });
     // Web fallback: direct jsPDF download. Electron: save dialog to chosen folder.
     if (!window.electronAPI?.files?.savePDFBytes) {
@@ -220,7 +222,7 @@ export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> =
   if (!primaryMovement || !customer) {
     return (
       <div className="p-8 text-center space-y-3">
-        <p className="text-sm text-muted-foreground">No delivery challan records found for the requested dispatch.</p>
+        <p className="text-sm text-muted-foreground">{isReturn ? 'No return records found for the requested return slip.' : 'No delivery challan records found for the requested dispatch.'}</p>
         {onClose && (
           <button
             onClick={onClose}
@@ -233,21 +235,28 @@ export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> =
     );
   }
 
-  // Calculate item values and totals
+  // Calculate item quantities. The challan is quantities-only (no rates or
+  // values — it is a holding transfer, not a sale): PCS lines for mapped
+  // products carry their transfer weight alongside, shown in KG once the line
+  // hits 1000 gram, in gram below. Unmapped lines show qty only, as before.
   let totalQuantity = 0;
-  let totalIndicativeVal = 0;
+  let totalWeightGrams = 0;
 
   const itemRows = movements.map((mov, idx) => {
     const prod = products[mov.product_id];
     const uom = uoms[mov.unit_id];
-    // Agreed customer price wins; base price otherwise; legacy 100 fallback
-    // only when neither exists (preserves previous no-price behavior).
-    const resolved = resolvePriceForCustomer(mov.product_id, mov.unit_id, mov.customer_id);
-    const unitPrice = resolved.isCustom ? resolved.price : resolved.basePrice || 100;
-    const lineTotal = roundCurrency(mov.quantity * unitPrice);
+    const pieceMapping = getPieceWeightMapping(mov.product_id);
+    let weightQty: number | undefined;
+    let weightUom: 'KG' | 'gram' | undefined;
+    if (pieceMapping) {
+      const grams = roundCurrency(mov.quantity * pieceMapping.gramsPerPiece);
+      const shown = toDisplayWeight(grams);
+      weightQty = shown.qty;
+      weightUom = shown.unit;
+      totalWeightGrams = roundCurrency(totalWeightGrams + grams);
+    }
 
     totalQuantity += mov.quantity;
-    totalIndicativeVal = roundCurrency(totalIndicativeVal + lineTotal);
 
     return {
       sNo: idx + 1,
@@ -257,11 +266,11 @@ export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> =
       description: prod?.description || '',
       quantity: mov.quantity,
       unitCode: uom?.code || 'PCS',
-      indicativePrice: unitPrice,
-      isCustomPrice: resolved.isCustom,
-      lineTotal,
+      weightQty,
+      weightUom,
     };
   });
+  const totalWeightShown = toDisplayWeight(totalWeightGrams);
 
   const challanDate = new Date(primaryMovement.movement_date || primaryMovement.created_at).toLocaleDateString('en-IN', {
     day: '2-digit',
@@ -280,7 +289,7 @@ export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> =
       <Toolbar className="flex-col sm:flex-row sm:items-center gap-3">
         <div className="flex items-center gap-3">
           <Badge variant="neutral" size="md">
-            Delivery Challan #{primaryMovement.reference_id}
+            {t('printBar.challanBadge', { ref: primaryMovement.reference_id })}
           </Badge>
           <div className="flex items-center gap-1 bg-card border border-input rounded-md p-0.5">
             {(['ORIGINAL', 'DUPLICATE', 'TRIPLICATE'] as ChallanCopyType[]).map((type) => (
@@ -293,25 +302,25 @@ export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> =
                     : 'text-muted-foreground hover:bg-muted'
                 }`}
               >
-                {type === 'ORIGINAL' ? 'Consignee Copy' : type === 'DUPLICATE' ? 'Transporter' : 'Consignor'}
+                {type === 'ORIGINAL' ? t('printBar.copyConsignee') : type === 'DUPLICATE' ? t('printBar.copyTransporter') : t('printBar.copyConsignor')}
               </button>
             ))}
           </div>
         </div>
 
         <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" onClick={handleDownloadPDF} disabled={downloading} aria-label="Download challan as PDF file" className="px-4 py-2">
+          <Button variant="secondary" size="sm" onClick={handleDownloadPDF} disabled={downloading} aria-label={t('printBar.downloadChallanAria')} className="px-4 py-2">
             <Download className="w-4 h-4 text-muted-foreground" aria-hidden="true" />
-            <span>{downloading ? 'Preparing PDF…' : 'Download PDF'}</span>
+            <span>{downloading ? t('printBar.preparingPdf') : t('printBar.downloadChallan')}</span>
           </Button>
 
           <Button variant="primary" size="sm" onClick={handlePrint} className="px-4 py-2">
             <Printer className="w-4 h-4" />
-            <span>Print Challan / Save PDF</span>
+            <span>{t('printBar.printChallan')}</span>
           </Button>
 
           {onClose && (
-            <Button variant="icon-ghost" size="icon" onClick={onClose} aria-label="Close challan preview" title="Close Challan">
+            <Button variant="icon-ghost" size="icon" onClick={onClose} aria-label={t('printBar.closeChallan')} title={t('printBar.closeChallanTitle')}>
               <X className="w-4 h-4" aria-hidden="true" />
             </Button>
           )}
@@ -323,7 +332,7 @@ export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> =
         <Card className="p-4 no-print text-xs space-y-3 shadow-2xs">
           <div className="flex flex-col sm:flex-row sm:items-end gap-3">
             <div className="flex-1 min-w-[220px]">
-              <Label className="mb-1">Printer</Label>
+              <Label className="mb-1">{t('printBar.printer')}</Label>
               <div className="flex gap-2">
                 <Select
                   value={selectedPrinter}
@@ -332,7 +341,7 @@ export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> =
                   className="flex-1 font-medium disabled:opacity-50"
                 >
                   {printers.length === 0 ? (
-                    <option value="">— No printers found —</option>
+                    <option value="">{t('printBar.noPrinters')}</option>
                   ) : (
                     printers.map((p) => (
                       <option key={p.name} value={p.name}>
@@ -346,7 +355,7 @@ export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> =
                   size="icon"
                   onClick={() => void loadPrinters()}
                   disabled={printersLoading}
-                  title="Refresh printer list"
+                  title={t('printBar.refreshPrinters')}
                   className="px-2.5 disabled:opacity-40"
                 >
                   <RefreshCw className={`w-4 h-4 text-muted-foreground ${printersLoading ? 'animate-spin' : ''}`} />
@@ -355,7 +364,7 @@ export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> =
             </div>
 
             <div className="w-24">
-              <Label className="mb-1">Copies</Label>
+              <Label className="mb-1">{t('printBar.copies')}</Label>
               <Input
                 type="number"
                 min={1}
@@ -376,17 +385,17 @@ export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> =
                 className="px-4 py-2 disabled:opacity-50"
               >
                 <Printer className="w-4 h-4" />
-                <span>{printing ? 'Printing…' : 'Print Challan'}</span>
+                <span>{printing ? t('printBar.printing') : t('printBar.printNow')}</span>
               </Button>
               <Button
                 variant="secondary"
                 size="md"
                 onClick={() => void handleSystemDialogPrint()}
                 disabled={printing}
-                title="Open the system print dialog (preview & settings)"
+                title={t('printBar.systemDialogTitle')}
                 className="px-4 py-2 disabled:opacity-50"
               >
-                <span>System Dialog</span>
+                <span>{t('printBar.systemDialog')}</span>
               </Button>
             </div>
           </div>
@@ -401,6 +410,7 @@ export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> =
 
       {/* Printable Challan Document Container */}
       <div className="bg-card border border-input rounded-lg shadow-sm p-8 sm:p-10 max-w-4xl mx-auto text-foreground print-container print:p-0 print:border-none print:shadow-none">
+        <PrintWatermark logoDataUrl={businessSettings.logo_data} />
         {/* Document Header */}
         <div className="border-b-2 border-neutral-900 pb-4 mb-4">
           <div className="flex flex-col sm:flex-row justify-between items-start gap-4">
@@ -413,31 +423,14 @@ export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> =
                   <h1 className="text-xl font-bold tracking-tight text-neutral-950 uppercase">
                     {businessSettings.business_name}
                   </h1>
-                  <p className="text-[11px] text-neutral-500 font-mono">
-                    {businessSettings.legal_name}
-                  </p>
                 </div>
-              </div>
-              <p className="text-xs text-neutral-600 max-w-md pt-1">
-                {businessSettings.address}, {businessSettings.city}, {businessSettings.state} - {businessSettings.postal_code}, India
-              </p>
-              <div className="text-[11px] font-mono text-neutral-700 flex flex-wrap gap-x-4 pt-0.5">
-                <span><strong>GSTIN:</strong> {businessSettings.gst_number}</span>
-                <span><strong>PAN:</strong> {businessSettings.pan}</span>
-                <span><strong>State Code:</strong> {businessSettings.state_code} ({businessSettings.state})</span>
               </div>
             </div>
 
             <div className="text-right sm:text-right shrink-0">
               <div className="inline-block px-3 py-1 bg-neutral-900 text-white font-bold text-sm tracking-wider uppercase rounded">
-                DELIVERY CHALLAN
+                {isReturn ? 'RETURN CHALLAN' : 'DELIVERY CHALLAN'}
               </div>
-              <div className="text-[10px] font-mono font-bold text-neutral-600 mt-1 uppercase">
-                [ {copyLabels[copyType]} ]
-              </div>
-              <p className="text-[10px] text-neutral-500 mt-0.5 max-w-[240px]">
-                Issued under Rule 55 of CGST / SGST Rules, 2017
-              </p>
             </div>
           </div>
         </div>
@@ -460,29 +453,12 @@ export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> =
           </div>
         </div>
 
-        {/* Parties Box: Consignor (From) & Consignee (To) */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6 text-xs">
-          {/* Dispatch From */}
-          <div className="p-3.5 border border-neutral-200 rounded space-y-1">
-            <div className="text-[10px] font-mono font-bold uppercase tracking-wider text-neutral-500 pb-1 border-b border-neutral-100 flex items-center justify-between">
-              <span>Consignor (Dispatched From)</span>
-              <span className="text-neutral-400">Warehouse Origin</span>
-            </div>
-            <div className="font-bold text-neutral-900 text-sm pt-1">{businessSettings.business_name}</div>
-            <p className="text-neutral-600 leading-relaxed">
-              {businessSettings.address}, {businessSettings.city}, {businessSettings.state} - {businessSettings.postal_code}
-            </p>
-            <div className="font-mono text-[11px] text-neutral-700 pt-1 space-y-0.5">
-              <div><strong>GSTIN:</strong> {businessSettings.gst_number}</div>
-              <div><strong>State / Code:</strong> {businessSettings.state} (Code: {businessSettings.state_code})</div>
-              <div><strong>Contact:</strong> {businessSettings.phone} • {businessSettings.email}</div>
-            </div>
-          </div>
-
-          {/* Dispatch To */}
+        {/* Parties Box: the customer site on the other end of this movement.
+            Dispatch shows where goods went; returns show where they came from. */}
+        <div className="mb-6 text-xs">
           <div className="p-3.5 border border-neutral-200 rounded space-y-1 bg-neutral-50/50">
             <div className="text-[10px] font-mono font-bold uppercase tracking-wider text-neutral-500 pb-1 border-b border-neutral-100 flex items-center justify-between">
-              <span>Consignee (Dispatched To)</span>
+              <span>{isReturn ? 'Returned From (Customer Site)' : 'Consignee (Dispatched To)'}</span>
               <span className="text-emerald-700 font-semibold">Customer Site</span>
             </div>
             <div className="font-bold text-neutral-900 text-sm pt-1">{customer.customer_name}</div>
@@ -490,20 +466,8 @@ export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> =
               {customer.address}, {customer.city}, {customer.state} - {customer.postal_code}
             </p>
             <div className="font-mono text-[11px] text-neutral-700 pt-1 space-y-0.5">
-              <div><strong>GSTIN / UIN:</strong> {customer.gst_number}</div>
-              <div><strong>State / Code:</strong> {customer.state} (Code: {getCustomerStateCode(customer)})</div>
               <div><strong>Contact:</strong> {customer.mobile}</div>
             </div>
-          </div>
-        </div>
-
-        {/* Place of Supply Box */}
-        <div className="p-3 bg-neutral-50/80 border border-neutral-200 rounded mb-6 text-xs font-mono">
-          <div>
-            <span className="text-neutral-500 block text-[10px] uppercase">Place of Supply:</span>
-            <span className="font-semibold text-neutral-900">
-              {customer.city}, {customer.state}
-            </span>
           </div>
         </div>
 
@@ -518,8 +482,6 @@ export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> =
                 <th scope="col" className="py-2.5 px-3 font-mono">SKU / Code</th>
                 <th scope="col" className="py-2.5 px-3 text-right font-mono">Dispatched Qty</th>
                 <th scope="col" className="py-2.5 px-3 font-mono">UOM</th>
-                <th scope="col" className="py-2.5 px-3 text-right font-mono">Agreed Rate</th>
-                <th scope="col" className="py-2.5 px-3 text-right font-mono">Total Value (₹)</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-200 font-sans">
@@ -535,24 +497,20 @@ export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> =
                   <td className="py-2.5 px-3 font-mono text-neutral-600">{row.sku}</td>
                   <td className="py-2.5 px-3 text-right font-mono font-bold text-neutral-900 text-sm">
                     {row.quantity}
+                    {row.weightQty !== undefined && row.weightUom && (
+                      <span className="block text-[10px] font-normal text-neutral-500">
+                        (= {row.weightQty} {row.weightUom})
+                      </span>
+                    )}
                   </td>
                   <td className="py-2.5 px-3 font-mono text-neutral-600 uppercase">{row.unitCode}</td>
-                  <td className="py-2.5 px-3 text-right font-mono text-neutral-700">
-                    {formatINR(row.indicativePrice)}
-                    <span className={`block text-[9px] font-bold ${row.isCustomPrice ? 'text-emerald-700' : 'text-neutral-400'}`}>
-                      {row.isCustomPrice ? 'AGREED' : 'BASE'}
-                    </span>
-                  </td>
-                  <td className="py-2.5 px-3 text-right font-mono font-semibold text-neutral-900">
-                    {formatINR(row.lineTotal)}
-                  </td>
                 </tr>
               ))}
             </tbody>
             <tfoot>
               <tr className="border-t-2 border-neutral-300 bg-neutral-50 font-mono font-bold text-neutral-900 text-xs">
                 <td colSpan={3} className="py-3 px-3 text-right uppercase">
-                  Total Dispatched Quantity &amp; Value:
+                  Total Dispatched Quantity:
                 </td>
                 <td className="py-3 px-3 text-right text-sm font-bold text-neutral-950">
                   {totalQuantity}
@@ -560,29 +518,26 @@ export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> =
                 <td className="py-3 px-3 uppercase text-[11px] text-neutral-600 font-normal">
                   Units
                 </td>
-                <td className="py-3 px-3"></td>
-                <td className="py-3 px-3 text-right text-sm font-bold text-neutral-950">
-                  {formatINR(totalIndicativeVal)}
-                </td>
               </tr>
+              {totalWeightGrams > 0 && (
+                <tr className="border-t border-neutral-200 bg-neutral-50 font-mono font-bold text-neutral-900 text-xs">
+                  <td colSpan={3} className="py-2.5 px-3 text-right uppercase">
+                    Total Transfer Weight:
+                  </td>
+                  <td className="py-2.5 px-3 text-right text-sm font-bold text-neutral-950">
+                    {totalWeightShown.qty}
+                  </td>
+                  <td className="py-2.5 px-3 uppercase text-[11px] text-neutral-600 font-normal">
+                    {totalWeightShown.unit}
+                  </td>
+                </tr>
+              )}
             </tfoot>
           </table>
         </div>
 
-        {/* Valuation & Statutory Notice */}
-        <div className="p-3.5 bg-neutral-50 border border-neutral-200 rounded text-xs space-y-2 mb-6">
-          <div className="font-mono text-xs">
-            <strong className="text-neutral-700">Agreed Value in Words:</strong>{' '}
-            <span className="font-semibold text-neutral-900">{numberToWordsINR(totalIndicativeVal)}</span>
-          </div>
-          <div className="text-[11px] text-neutral-600 leading-relaxed pt-1 border-t border-neutral-200">
-            <strong>Statutory Declaration (Rule 55):</strong> This Delivery Challan is issued under Rule 55 of the Central Goods and Services Tax (CGST) Rules, 2017 for transfer and transportation of goods to the customer site on a consignment/holding basis.
-            <strong> THIS DOCUMENT DOES NOT CONSTITUTE A TAX INVOICE OR SALE OF GOODS.</strong> Ownership, title, and legal risk of the material remain with the consignor ({businessSettings.business_name}) until a formal tax invoice is generated upon billing allocation.
-          </div>
-        </div>
-
         {/* Signature & Acknowledgment Section */}
-        <div className="border border-neutral-200 rounded p-4 grid grid-cols-1 sm:grid-cols-3 gap-6 text-xs text-center">
+        <div className="border border-neutral-200 rounded p-4 grid grid-cols-1 sm:grid-cols-2 gap-6 text-xs text-center">
           <div className="flex flex-col justify-between h-28 border-r sm:border-r border-neutral-200 pr-3">
             <div className="text-[11px] font-semibold text-neutral-700">
               Receiver's Acknowledgment &amp; Stamp
@@ -595,21 +550,9 @@ export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> =
             </div>
           </div>
 
-          <div className="flex flex-col justify-between h-28 border-r sm:border-r border-neutral-200 px-3">
-            <div className="text-[11px] font-semibold text-neutral-700">
-              Transporter / Driver's Signature
-            </div>
-            <div className="space-y-1">
-              <div className="border-t border-dashed border-neutral-400 w-3/4 mx-auto pt-1"></div>
-              <p className="text-[10px] text-neutral-500">
-                Accepted material for safe carriage to site
-              </p>
-            </div>
-          </div>
-
           <div className="flex flex-col justify-between h-28 pl-3">
             <div className="text-[11px] font-semibold text-neutral-700">
-              For <strong>{businessSettings.business_name}</strong>
+              For <strong>{isReturn && customer ? customer.customer_name : businessSettings.business_name}</strong>
             </div>
             <div className="space-y-1">
               <div className="border-t border-neutral-900 w-3/4 mx-auto pt-1"></div>
@@ -621,9 +564,12 @@ export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> =
         </div>
 
         {/* Footnote */}
-        <div className="mt-4 pt-3 border-t border-neutral-200 text-center text-[10px] font-mono text-neutral-400 flex justify-between">
-          <span>Generated via AccuLedger ERP • Ref: {primaryMovement.reference_id}</span>
-          <span>Subject to {businessSettings.city} Jurisdiction</span>
+        <div className="mt-4 pt-3 border-t border-neutral-200 text-center text-[10px] font-mono text-neutral-400 space-y-0.5">
+          <div>{formatAddress(businessSettings.address, businessSettings.city, businessSettings.state, businessSettings.postal_code ? `${businessSettings.postal_code}, India` : 'India')}{businessSettings.phone ? ` • Contact: ${businessSettings.phone}` : ''}</div>
+          <div className="flex justify-between">
+            <span>Generated via AccuLedger ERP • Ref: {primaryMovement.reference_id}</span>
+            <span>Subject to {businessSettings.city} Jurisdiction</span>
+          </div>
         </div>
       </div>
     </div>

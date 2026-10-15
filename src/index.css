@@ -51,6 +51,40 @@
   font-display: swap;
   src: url('./assets/fonts/JetBrainsMono-600.woff2') format('woff2');
 }
+/* Gujarati script coverage (offline-first: Gujarati-subset woff2, ~110KB each).
+   Latin text keeps Plus Jakarta Sans; Gujarati falls through to Noto. */
+@font-face {
+  font-family: 'Noto Sans Gujarati';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./assets/fonts/NotoSansGujarati-400.woff2') format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0A80-0AFF, U+200C-200D, U+20B9, U+25CC, U+A830-A839;
+}
+@font-face {
+  font-family: 'Noto Sans Gujarati';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('./assets/fonts/NotoSansGujarati-500.woff2') format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0A80-0AFF, U+200C-200D, U+20B9, U+25CC, U+A830-A839;
+}
+@font-face {
+  font-family: 'Noto Sans Gujarati';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('./assets/fonts/NotoSansGujarati-600.woff2') format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0A80-0AFF, U+200C-200D, U+20B9, U+25CC, U+A830-A839;
+}
+@font-face {
+  font-family: 'Noto Sans Gujarati';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('./assets/fonts/NotoSansGujarati-700.woff2') format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0A80-0AFF, U+200C-200D, U+20B9, U+25CC, U+A830-A839;
+}
 
 :root {
   --background: oklch(0.9838 0.0035 247.8583);
@@ -85,7 +119,7 @@
   --sidebar-accent-foreground: oklch(0.4865 0.2423 291.8661);
   --sidebar-border: oklch(0.9278 0.0058 264.5314);
   --sidebar-ring: oklch(0.4865 0.2423 291.8661);
-  --font-sans: Plus Jakarta Sans, Inter, system-ui, sans-serif;
+  --font-sans: Plus Jakarta Sans, Noto Sans Gujarati, Inter, system-ui, sans-serif;
   --font-serif: Georgia, serif;
   --font-mono: JetBrains Mono, monospace;
   --radius: 1rem;
@@ -140,7 +174,7 @@
   --sidebar-accent-foreground: oklch(0.6083 0.2172 297.1153);
   --sidebar-border: oklch(0.2217 0.0242 299.7054);
   --sidebar-ring: oklch(0.6083 0.2172 297.1153);
-  --font-sans: Plus Jakarta Sans, Inter, system-ui, sans-serif;
+  --font-sans: Plus Jakarta Sans, Noto Sans Gujarati, Inter, system-ui, sans-serif;
   --font-serif: Georgia, serif;
   --font-mono: JetBrains Mono, monospace;
   --radius: 1rem;
@@ -227,7 +261,7 @@
   body {
     @apply bg-background text-foreground;
     letter-spacing: var(--tracking-normal);
-    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    font-family: 'Plus Jakarta Sans', 'Noto Sans Gujarati', system-ui, -apple-system, sans-serif;
   }
   .font-mono {
     font-family: 'JetBrains Mono', monospace;
@@ -251,9 +285,36 @@
 }
 
 /* ---- Legal / tax documents stay black-on-white in BOTH themes ---- */
+.print-container {
+  position: relative;
+}
 .print-container,
 .print-container * {
   color-scheme: light;
+}
+/* Centred business-logo wordmark for browser-printed documents
+   (window.print -> Save as PDF). Large, faint, behind content;
+   the jsPDF equivalent lives in utils/pdfDocuments.ts drawWatermark. */
+.pdf-watermark {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 0;
+}
+.pdf-watermark img {
+  width: 62%;
+  max-height: 60%;
+  object-fit: contain;
+  opacity: 0.08;
+  print-color-adjust: exact;
+  -webkit-print-color-adjust: exact;
+}
+.print-container > *:not(.pdf-watermark) {
+  position: relative;
+  z-index: 1;
 }
 .dark .print-container {
   --background: #ffffff;
@@ -267,6 +328,64 @@
   background: #ffffff !important;
   color: #171717 !important;
   border-color: #e5e5e5 !important;
+}
+
+/* ---- Language settings tab: fixed-region layout, zero native bars ----
+   While the language editor is mounted (body.lang-tab-active, managed by the
+   view itself), the page fills the shell exactly: title + toolbar + pager stay
+   fixed, only the rows box scrolls internally. No page-level overflow can
+   occur, so no page scrollbars and no trailing blank space are possible.
+   Native bar chrome is hidden on EVERY scroller under the body class (main,
+   sidebar nav, list box, document) — wheel / trackpad / touch / keyboard
+   scrolling keeps working everywhere. Scoped to the body class so every other
+   tab keeps its normal scrollbars; the class is removed on unmount. */
+body.lang-tab-active,
+body.lang-tab-active main {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+body.lang-tab-active::-webkit-scrollbar,
+body.lang-tab-active *::-webkit-scrollbar {
+  width: 0 !important;
+  height: 0 !important;
+}
+body.lang-tab-active::-webkit-scrollbar-thumb,
+body.lang-tab-active *::-webkit-scrollbar-thumb,
+body.lang-tab-active::-webkit-scrollbar-track,
+body.lang-tab-active *::-webkit-scrollbar-track,
+body.lang-tab-active::-webkit-scrollbar-button,
+body.lang-tab-active *::-webkit-scrollbar-button {
+  display: none !important;
+  background: transparent !important;
+  border: 0 !important;
+}
+/* Shell content wrapper must be exactly the scroller height so the view's
+   flex column below can distribute space without page-level overflow. */
+body.lang-tab-active main > div {
+  height: 100%;
+}
+.lang-fit-root {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.lang-list-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.lang-list-scroll::-webkit-scrollbar {
+  width: 0 !important;
+  height: 0 !important;
+}
+.lang-list-scroll::-webkit-scrollbar-thumb,
+.lang-list-scroll::-webkit-scrollbar-track,
+.lang-list-scroll::-webkit-scrollbar-button {
+  display: none !important;
+  background: transparent !important;
+  border: 0 !important;
 }
 
 @media print {

@@ -74,7 +74,14 @@ const WRITABLE_SETTINGS_FIELDS = new Set([
   'currency',
   'default_gst_rate',
   'state_code',
+  'logo_data',
 ]);
+
+// PNG/JPEG data URL cap (~1 MB image). Bigger files are rejected at the
+// Settings upload step; this is the backstop so one bad write cannot bloat
+// the database (backups copy the whole file).
+const MAX_LOGO_DATA_URL_LENGTH = 1500000;
+const LOGO_DATA_URL_RE = /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/;
 
 function fail(error: string, message: string): SettingsResult {
   return { ok: false, error, message };
@@ -168,6 +175,17 @@ function validateSettingsRow(row: SettingsRow): SettingsResult | null {
       'INVALID_GST_RATE',
       `Standard GST rate must be a notified slab: ${GST_SLABS.join(', ')}.`
     );
+  }
+  // Optional logo: empty/null clears it; otherwise a PNG/JPEG data URL.
+  const logo = row.logo_data;
+  if (logo !== undefined && logo !== null && logo !== '') {
+    if (
+      typeof logo !== 'string' ||
+      logo.length > MAX_LOGO_DATA_URL_LENGTH ||
+      !LOGO_DATA_URL_RE.test(logo)
+    ) {
+      return fail('INVALID_LOGO', 'Business logo must be a PNG or JPEG image under 1 MB.');
+    }
   }
   return null;
 }

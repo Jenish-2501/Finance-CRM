@@ -17,6 +17,8 @@ Date: 2026-10-09. Status: GREEN (8/8).
 ## Counts
 - `status.test.ts`: 8 passed (row-state boundaries incl. never-billed ≠ billed; movement
   BILLED/PARTIAL/UNBILLED incl. over-allocation quirk and degenerate zero movement).
+- `challanOptions.test.tsx`: 4 passed (grouping newest-first, multi-row merge with summed
+  quantity, customer/product scoping with returns skipped, empty cases).
 - Regressions: `tsc` (+unused), all vitest files, `test:db`, `test:m1`, `test:m2` green.
 
 ## Commands

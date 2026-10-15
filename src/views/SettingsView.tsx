@@ -10,11 +10,14 @@ import {
   CheckCircle2,
   AlertTriangle,
   KeyRound,
-  Ruler
+  Ruler,
+  Image as ImageIcon
 } from 'lucide-react';
 import { Modal } from '../components/common/Modal';
 import { ShellBadge } from '../components/common/ShellBadge';
-import { Alert, Button, Card, CardTitle, Input, Label, PageHeader, Select, TableShell, Table, THead, TBody, TR, TH, TD } from '../components/ui';
+import { Alert, Button, Card, CardTitle, Input, Label, PageHeader, Select, TableShell, Table, THead, TBody, TR, TH, TD, Tabs } from '../components/ui';
+import { LanguageSettingsView } from './settings/LanguageSettingsView';
+import { useT } from '../i18n';
 import { isElectronShell } from '../utils/shellEnv';
 
 // Notified GST slabs (total %). Must stay in sync with GST_SLABS in
@@ -77,6 +80,7 @@ function validateSettingsForm(form: BusinessSettings): string | null {
 type SaveState = { status: 'idle' } | { status: 'saving' } | { status: 'success'; localOnly: boolean } | { status: 'error'; message: string };
 
 export const SettingsView: React.FC = () => {
+  const { t } = useT();
   const {
     businessSettings,
     uoms,
@@ -93,12 +97,66 @@ export const SettingsView: React.FC = () => {
   const [formData, setFormData] = useState<BusinessSettings>({ ...businessSettings });
   const [saveState, setSaveState] = useState<SaveState>({ status: 'idle' });
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
+  // Sub-route under Settings: business profile vs. Gujarati wording editor.
+  const [settingsTab, setSettingsTab] = useState<'business' | 'language'>('business');
   const [seriesDraft, setSeriesDraft] = useState<string | null>(null);
   const [seriesMessage, setSeriesMessage] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
   const [custNextDraft, setCustNextDraft] = useState<string | null>(null);
   const [custNextMessage, setCustNextMessage] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
   const [docNextDraft, setDocNextDraft] = useState<string | null>(null);
   const [docNextMessage, setDocNextMessage] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
+
+  // Business logo (PDF watermark): pending file choice, persisted separately.
+  const [logoDraft, setLogoDraft] = useState<string | null>(null);
+  const [logoBusy, setLogoBusy] = useState(false);
+  const [logoMessage, setLogoMessage] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
+  const logoFileRef = useRef<HTMLInputElement>(null);
+  const logoEffective = logoDraft ?? (businessSettings.logo_data || '');
+  const MAX_LOGO_BYTES = 1024 * 1024;
+
+  const handleLogoFile = (file: File | undefined) => {
+    setLogoMessage(null);
+    if (!file) return;
+    if (file.type !== 'image/png' && file.type !== 'image/jpeg') {
+      setLogoMessage({ kind: 'error', text: t('settings.logoInvalid') });
+      return;
+    }
+    if (file.size > MAX_LOGO_BYTES) {
+      setLogoMessage({ kind: 'error', text: t('settings.logoTooBig') });
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = typeof reader.result === 'string' ? reader.result : '';
+      if (!dataUrl.startsWith('data:image/')) {
+        setLogoMessage({ kind: 'error', text: t('settings.logoInvalid') });
+        return;
+      }
+      setLogoDraft(dataUrl);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const persistLogo = async (value: string) => {
+    if (logoBusy) return;
+    setLogoMessage(null);
+    setLogoBusy(true);
+    try {
+      const result = await saveBusinessSettings({ logo_data: value });
+      if (result.ok) {
+        setLogoDraft(null);
+        if (logoFileRef.current) logoFileRef.current.value = '';
+        setLogoMessage({
+          kind: 'success',
+          text: result.localOnly ? t('settings.savedLocal') : t('settings.savedDb')
+        });
+      } else {
+        setLogoMessage({ kind: 'error', text: result.error || t('settings.logoInvalid') });
+      }
+    } finally {
+      setLogoBusy(false);
+    }
+  };
 
   const currentFy = getFyForDate(new Date().toISOString());
   const currentSeries = Object.values(invoiceSeries).find((s) => s.fy === currentFy) || null;
@@ -298,24 +356,39 @@ export const SettingsView: React.FC = () => {
     <div className="space-y-6">
       {/* Top Banner */}
       <PageHeader
-        title="Company Profile & Statutory Settings"
-        subtitle="Legal entity parameters • Tax configuration • Banking snapshots • Demo state controls"
+        title={t('settings.title')}
+        subtitle={t('settings.subtitle')}
         actions={
           <Button variant="destructive-outline" size="sm" onClick={() => setResetConfirmOpen(true)}>
             <RotateCcw className="w-3.5 h-3.5" />
-            <span>Restore Default Demo Data</span>
+            <span>{t('settings.restoreDemo')}</span>
           </Button>
         }
       />
 
+      {/* Sub-routes: business profile | language wording (DB-backed) */}
+      <Tabs
+        ariaLabel={t('settings.title')}
+        activeId={settingsTab}
+        onSelect={(id) => setSettingsTab(id as 'business' | 'language')}
+        tabs={[
+          { id: 'business', label: t('settings.tabBusiness') },
+          { id: 'language', label: t('settings.tabLanguage') },
+        ]}
+      />
+
+      {settingsTab === 'language' ? (
+        <LanguageSettingsView />
+      ) : (
+      <>
       {saveState.status === 'success' && (
         <Alert tone="success">
           <div className="flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4" />
             <span>
               {saveState.localOnly
-                ? 'Business settings saved locally (browser preview — no database). Open the desktop app to persist them.'
-                : 'Business settings saved to the database. Existing historical invoice snapshots remain unchanged.'}
+                ? t('settings.savedLocal')
+                : t('settings.savedDb')}
             </span>
           </div>
         </Alert>
@@ -337,63 +410,63 @@ export const SettingsView: React.FC = () => {
           <div className="flex items-center gap-2 border-b border-border pb-3">
             <Building2 className="w-4 h-4 text-muted-foreground" />
             <h2 className="text-xs font-bold uppercase tracking-wider text-foreground">
-              Legal Business Information &amp; GST Identification
+              {t('settings.secLegal')}
             </h2>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
-              <label className="block font-semibold text-foreground mb-1">Trade Business Name</label>
-              <input
+              <Label className="mb-1">{t('settings.fBizName')}</Label>
+              <Input
                 type="text"
                 required
                 value={formData.business_name}
                 onChange={(e) => handleChange('business_name', e.target.value)}
-                className="w-full p-2 border border-input rounded"
+                className="w-full"
               />
             </div>
 
             <div className="md:col-span-2">
-              <label className="block font-semibold text-foreground mb-1">Full Legal Corporate Name</label>
-              <input
+              <Label className="mb-1">{t('settings.fLegalName')}</Label>
+              <Input
                 type="text"
                 required
                 value={formData.legal_name}
                 onChange={(e) => handleChange('legal_name', e.target.value)}
-                className="w-full p-2 border border-input rounded"
+                className="w-full"
               />
             </div>
 
             <div>
-              <label className="block font-semibold text-foreground mb-1">GSTIN Number</label>
-              <input
+              <Label className="mb-1">{t('settings.fGstinNum')}</Label>
+              <Input
                 type="text"
                 required
                 value={formData.gst_number}
                 onChange={(e) => handleChange('gst_number', e.target.value.toUpperCase())}
-                className="w-full p-2 border border-input rounded font-mono uppercase"
+                className="w-full font-mono uppercase"
               />
             </div>
 
             <div>
-              <label className="block font-semibold text-foreground mb-1">Company PAN</label>
-              <input
+              <Label className="mb-1">{t('settings.fPanNum')}</Label>
+              <Input
                 type="text"
                 required
                 value={formData.pan}
                 onChange={(e) => handleChange('pan', e.target.value.toUpperCase())}
-                className="w-full p-2 border border-input rounded font-mono uppercase"
+                className="w-full font-mono uppercase"
               />
             </div>
 
             <div>
-              <label className="block font-semibold text-foreground mb-1">Home State Code (GST)</label>
-              <input
+              <Label className="mb-1">{t('settings.fHomeState')}</Label>
+              <Input
                 type="text"
                 required
                 value={formData.state_code}
                 onChange={(e) => handleChange('state_code', e.target.value)}
-                className="w-full p-2 border border-input rounded font-mono"
+                className="w-full font-mono"
               />
             </div>
           </div>
@@ -403,84 +476,84 @@ export const SettingsView: React.FC = () => {
         <div className="bg-card border border-border rounded-lg p-5 shadow-2xs space-y-4">
           <div className="flex items-center gap-2 border-b border-border pb-3">
             <h2 className="text-xs font-bold uppercase tracking-wider text-foreground">
-              Registered Office Address &amp; Contact
+              {t('settings.secAddress')}
             </h2>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="md:col-span-2">
-              <label className="block font-semibold text-foreground mb-1">Street Address</label>
-              <input
+              <Label className="mb-1">{t('settings.fStreet')}</Label>
+              <Input
                 type="text"
                 required
                 value={formData.address}
                 onChange={(e) => handleChange('address', e.target.value)}
-                className="w-full p-2 border border-input rounded"
+                className="w-full"
               />
             </div>
 
             <div>
-              <label className="block font-semibold text-foreground mb-1">City</label>
-              <input
+              <Label className="mb-1">{t('settings.fCityB')}</Label>
+              <Input
                 type="text"
                 required
                 value={formData.city}
                 onChange={(e) => handleChange('city', e.target.value)}
-                className="w-full p-2 border border-input rounded"
+                className="w-full"
               />
             </div>
 
             <div>
-              <label className="block font-semibold text-foreground mb-1">State</label>
-              <input
+              <Label className="mb-1">{t('settings.fStateB')}</Label>
+              <Input
                 type="text"
                 required
                 value={formData.state}
                 onChange={(e) => handleChange('state', e.target.value)}
-                className="w-full p-2 border border-input rounded"
+                className="w-full"
               />
             </div>
 
             <div>
-              <label className="block font-semibold text-foreground mb-1">Postal Code</label>
-              <input
+              <Label className="mb-1">{t('settings.fPostal')}</Label>
+              <Input
                 type="text"
                 required
                 value={formData.postal_code}
                 onChange={(e) => handleChange('postal_code', e.target.value)}
-                className="w-full p-2 border border-input rounded font-mono"
+                className="w-full font-mono"
               />
             </div>
 
             <div>
-              <label className="block font-semibold text-foreground mb-1">Phone</label>
-              <input
+              <Label className="mb-1">{t('settings.fPhone')}</Label>
+              <Input
                 type="text"
                 required
                 value={formData.phone}
                 onChange={(e) => handleChange('phone', e.target.value)}
-                className="w-full p-2 border border-input rounded font-mono"
+                className="w-full font-mono"
               />
             </div>
 
             <div>
-              <label className="block font-semibold text-foreground mb-1">Accounts Email</label>
-              <input
+              <Label className="mb-1">{t('settings.fEmailAcct')}</Label>
+              <Input
                 type="email"
                 required
                 value={formData.email}
                 onChange={(e) => handleChange('email', e.target.value)}
-                className="w-full p-2 border border-input rounded"
+                className="w-full"
               />
             </div>
 
             <div>
-              <label className="block font-semibold text-foreground mb-1">Website</label>
-              <input
+              <Label className="mb-1">{t('settings.fWebsite')}</Label>
+              <Input
                 type="text"
                 value={formData.website}
                 onChange={(e) => handleChange('website', e.target.value)}
-                className="w-full p-2 border border-input rounded"
+                className="w-full"
               />
             </div>
           </div>
@@ -491,52 +564,52 @@ export const SettingsView: React.FC = () => {
           <div className="flex items-center gap-2 border-b border-border pb-3">
             <Landmark className="w-4 h-4 text-muted-foreground" />
             <h2 className="text-xs font-bold uppercase tracking-wider text-foreground">
-              Primary Banking Details (Snapshotted on Invoices)
+              {t('settings.secBank')}
             </h2>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div>
-              <label className="block font-semibold text-foreground mb-1">Bank Name</label>
-              <input
+              <Label className="mb-1">{t('settings.fBankName')}</Label>
+              <Input
                 type="text"
                 required
                 value={formData.bank_name}
                 onChange={(e) => handleChange('bank_name', e.target.value)}
-                className="w-full p-2 border border-input rounded"
+                className="w-full"
               />
             </div>
 
             <div>
-              <label className="block font-semibold text-foreground mb-1">Account Number</label>
-              <input
+              <Label className="mb-1">{t('settings.fAcctNum')}</Label>
+              <Input
                 type="text"
                 required
                 value={formData.bank_account_number}
                 onChange={(e) => handleChange('bank_account_number', e.target.value)}
-                className="w-full p-2 border border-input rounded font-mono"
+                className="w-full font-mono"
               />
             </div>
 
             <div>
-              <label className="block font-semibold text-foreground mb-1">IFSC Code</label>
-              <input
+              <Label className="mb-1">{t('settings.fIfsc')}</Label>
+              <Input
                 type="text"
                 required
                 value={formData.ifsc}
                 onChange={(e) => handleChange('ifsc', e.target.value.toUpperCase())}
-                className="w-full p-2 border border-input rounded font-mono uppercase"
+                className="w-full font-mono uppercase"
               />
             </div>
 
             <div>
-              <label className="block font-semibold text-foreground mb-1">Branch Name</label>
-              <input
+              <Label className="mb-1">{t('settings.fBranch')}</Label>
+              <Input
                 type="text"
                 required
                 value={formData.branch}
                 onChange={(e) => handleChange('branch', e.target.value)}
-                className="w-full p-2 border border-input rounded"
+                className="w-full"
               />
             </div>
           </div>
@@ -547,30 +620,29 @@ export const SettingsView: React.FC = () => {
           <div className="flex items-center gap-2 border-b border-border pb-3">
             <FileText className="w-4 h-4 text-muted-foreground" />
             <h2 className="text-xs font-bold uppercase tracking-wider text-foreground">
-              FY Invoice Numbering &amp; Statutory Tax Rates
+              {t('settings.secFy')}
             </h2>
           </div>
 
           <p className="text-[11px] text-muted-foreground">
-            Invoices are numbered as plain per-FY sequences (1, 2, 3…) restarting every April.
-            Live counters are managed in the FY series section below — history is never rewritten.
+            {t('settings.fyNote2')}
           </p>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block font-semibold text-foreground mb-1">FY Start Number</label>
-              <input
+              <Label className="mb-1">{t('settings.fFyStart')}</Label>
+              <Input
                 type="number"
                 required
                 min={1}
                 value={formData.invoice_start_number}
                 onChange={(e) => handleChange('invoice_start_number', Number(e.target.value))}
-                className="w-full p-2 border border-input rounded font-mono"
+                className="w-full font-mono"
               />
             </div>
 
             <div>
-              <Label className="mb-1">Standard GST Rate (%)</Label>
+              <Label className="mb-1">{t('settings.gstRate')}</Label>
               <Select
                 required
                 value={formData.default_gst_rate}
@@ -579,7 +651,7 @@ export const SettingsView: React.FC = () => {
               >
                 {GST_SLABS.map((slab) => (
                   <option key={slab} value={slab}>
-                    {slab}%{slab > 0 ? ` (${slab / 2}% CGST + ${slab / 2}% SGST intra-state / ${slab}% IGST inter-state)` : ' (exempt)'}
+                    {slab > 0 ? t('settings.slabRate', { slab, half: slab / 2 }) : t('settings.slabExempt', { slab })}
                   </option>
                 ))}
               </Select>
@@ -590,25 +662,100 @@ export const SettingsView: React.FC = () => {
         {/* Submit */}
         <div className="flex justify-end gap-3 pt-2">
           <Button type="submit" variant="primary" size="md" disabled={saveState.status === 'saving'} className="px-5 py-2">
-            {saveState.status === 'saving' ? 'Saving to database…' : 'Save Business Settings'}
+            {saveState.status === 'saving' ? t('settings.saving') : t('settings.save')}
           </Button>
         </div>
       </form>
+
+      {/* Business logo: stored in the database, watermarked on every PDF */}
+      <Card className="p-5 space-y-4 shadow-2xs">
+        <div className="flex items-center justify-between gap-2 border-b border-border pb-3">
+          <div className="flex items-center gap-2">
+            <ImageIcon className="w-4 h-4 text-muted-foreground" />
+            <CardTitle>{t('settings.logoTitle')}</CardTitle>
+          </div>
+          <ShellBadge />
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {t('settings.logoNote')}
+        </p>
+
+        {logoMessage && (
+          <Alert tone={logoMessage.kind === 'success' ? 'success' : 'destructive'}>
+            <div className="flex items-center gap-2">
+              {logoMessage.kind === 'success' ? (
+                <CheckCircle2 className="w-4 h-4" />
+              ) : (
+                <AlertTriangle className="w-4 h-4" />
+              )}
+              <span>{logoMessage.text}</span>
+            </div>
+          </Alert>
+        )}
+
+        <div className="flex flex-col sm:flex-row items-start gap-4">
+          <div className="w-36 h-36 shrink-0 rounded-md border border-border bg-muted flex items-center justify-center overflow-hidden">
+            {logoEffective ? (
+              <img src={logoEffective} alt={t('settings.logoTitle')} className="max-w-full max-h-full object-contain" />
+            ) : (
+              <ImageIcon className="w-8 h-8 text-muted-foreground/50" />
+            )}
+          </div>
+          <div className="flex-1 space-y-3">
+            <div>
+              <Label className="mb-1 sr-only">{t('settings.logoChoose')}</Label>
+              <input
+                ref={logoFileRef}
+                type="file"
+                accept="image/png,image/jpeg"
+                aria-label={t('settings.logoChoose')}
+                onChange={(e) => {
+                  handleLogoFile(e.target.files?.[0]);
+                }}
+                className="bg-card text-foreground border border-input rounded-md focus:outline-none focus:ring-1 focus:ring-ring focus:border-ring disabled:opacity-50 px-3 py-1.5 text-xs font-sans w-full"
+              />
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <Button
+                type="button"
+                variant="primary"
+                size="md"
+                disabled={logoBusy || logoDraft === null}
+                onClick={() => void persistLogo(logoDraft ?? '')}
+                className="px-4 py-2"
+              >
+                {logoBusy ? t('settings.saving') : t('settings.logoSave')}
+              </Button>
+              {logoEffective && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="md"
+                  disabled={logoBusy}
+                  onClick={() => void persistLogo('')}
+                  className="px-4 py-2"
+                >
+                  {t('settings.logoRemove')}
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+      </Card>
 
       {/* FY invoice series: live counters, rollover, locked history */}
       <Card className="p-5 space-y-4 shadow-2xs">
         <div className="flex items-center justify-between gap-2 border-b border-border pb-3">
           <div className="flex items-center gap-2">
             <FileText className="w-4 h-4 text-muted-foreground" />
-            <CardTitle>FY Invoice Series (Current FY {currentFy})</CardTitle>
+            <CardTitle>{t('settings.fyTitle', { fy: currentFy })}</CardTitle>
           </div>
           <Button type="button" variant="secondary" size="sm" onClick={handleStartNewFy}>
-            Start New FY Series
+            {t('settings.startNewFy')}
           </Button>
         </div>
         <p className="text-xs text-muted-foreground">
-          Plain numbers restart at the FY start number every April and follow each invoice's own
-          date (backdated bills draw from their FY). Past series are locked and read-only.
+          {t('settings.fyNote')}
         </p>
 
         {seriesMessage && (
@@ -626,7 +773,7 @@ export const SettingsView: React.FC = () => {
 
         <div className="flex flex-col sm:flex-row sm:items-end gap-3">
           <div>
-            <Label className="mb-1">Next Number — FY {currentFy}</Label>
+            <Label className="mb-1">{t('settings.nextNumber', { fy: currentFy })}</Label>
             <Input
               type="number"
               min={1}
@@ -636,13 +783,13 @@ export const SettingsView: React.FC = () => {
             />
           </div>
           <Button type="button" variant="primary" size="md" onClick={handleSaveSeriesNext} className="px-4 py-2">
-            Save Counter
+            {t('settings.saveCounter')}
           </Button>
         </div>
 
         <div className="flex flex-col sm:flex-row sm:items-end gap-3 pt-1">
           <div>
-            <Label className="mb-1">Next Customer Number (auto)</Label>
+            <Label className="mb-1">{t('settings.custNext')}</Label>
             <Input
               type="number"
               min={1}
@@ -652,10 +799,10 @@ export const SettingsView: React.FC = () => {
             />
           </div>
           <Button type="button" variant="secondary" size="md" onClick={() => void handleSaveCustomerNext()} className="px-4 py-2">
-            Save
+            {t('common.save')}
           </Button>
           {custNextMessage && (
-            <span className={`text-xs ${custNextMessage.kind === 'success' ? 'text-emerald-700' : 'text-rose-700'}`}>
+            <span className={`text-xs ${custNextMessage.kind === 'success' ? 'text-emerald-700 dark:text-emerald-300' : 'text-destructive'}`}>
               {custNextMessage.text}
             </span>
           )}
@@ -663,7 +810,7 @@ export const SettingsView: React.FC = () => {
 
         <div className="flex flex-col sm:flex-row sm:items-end gap-3 pt-1">
           <div>
-            <Label className="mb-1">Next Document Number (challans + returns, shared)</Label>
+            <Label className="mb-1">{t('settings.docNext')}</Label>
             <Input
               type="number"
               min={1}
@@ -673,10 +820,10 @@ export const SettingsView: React.FC = () => {
             />
           </div>
           <Button type="button" variant="secondary" size="md" onClick={() => void handleSaveDocumentNext()} className="px-4 py-2">
-            Save
+            {t('common.save')}
           </Button>
           {docNextMessage && (
-            <span className={`text-xs ${docNextMessage.kind === 'success' ? 'text-emerald-700' : 'text-rose-700'}`}>
+            <span className={`text-xs ${docNextMessage.kind === 'success' ? 'text-emerald-700 dark:text-emerald-300' : 'text-destructive'}`}>
               {docNextMessage.text}
             </span>
           )}
@@ -686,17 +833,17 @@ export const SettingsView: React.FC = () => {
           <Table>
             <THead>
               <TR className="hover:bg-transparent">
-                <TH className="text-left">FY</TH>
-                <TH className="text-right">Start</TH>
-                <TH className="text-right">Next</TH>
-                <TH className="text-left">Status</TH>
+                <TH className="text-left">{t('settings.thFy')}</TH>
+                <TH className="text-right">{t('settings.thStart')}</TH>
+                <TH className="text-right">{t('settings.thNext')}</TH>
+                <TH className="text-left">{t('settings.thStatus')}</TH>
               </TR>
             </THead>
             <TBody>
               {seriesList.length === 0 ? (
                 <tr>
                   <TD colSpan={4} className="text-muted-foreground">
-                    No series yet — the first invoice of a financial year starts its series automatically.
+                    {t('settings.noSeries')}
                   </TD>
                 </tr>
               ) : (
@@ -713,7 +860,7 @@ export const SettingsView: React.FC = () => {
                             : 'bg-muted text-muted-foreground border-border'
                         }`}
                       >
-                        {s.fy === currentFy ? 'CURRENT' : 'LOCKED'}
+                        {s.fy === currentFy ? t('settings.current') : t('settings.locked')}
                       </span>
                     </TD>
                   </TR>
@@ -729,13 +876,12 @@ export const SettingsView: React.FC = () => {
         <div className="flex items-center justify-between gap-2 border-b border-border pb-3">
           <div className="flex items-center gap-2">
             <Ruler className="w-4 h-4 text-muted-foreground" />
-            <CardTitle>Units of Measure (Shared Billing &amp; Inventory)</CardTitle>
+            <CardTitle>{t('settings.uomTitle')}</CardTitle>
           </div>
           <ShellBadge />
         </div>
         <p className="text-xs text-muted-foreground">
-          Units are stored in the database and shared by products, stock, dispatches, and invoices.
-          A unit in use cannot be deactivated.
+          {t('settings.uomNote')}
         </p>
 
         {uomMessage && (
@@ -755,11 +901,11 @@ export const SettingsView: React.FC = () => {
           <Table>
             <THead>
               <TR className="hover:bg-transparent">
-                <TH className="text-left">Code</TH>
-                <TH className="text-left">Name</TH>
-                <TH className="text-left hidden sm:table-cell">Description</TH>
-                <TH className="text-left">Status</TH>
-                <TH className="text-right">Action</TH>
+                <TH className="text-left">{t('settings.thCode')}</TH>
+                <TH className="text-left">{t('settings.thName')}</TH>
+                <TH className="text-left hidden sm:table-cell">{t('settings.thDesc')}</TH>
+                <TH className="text-left">{t('settings.thStatus2')}</TH>
+                <TH className="text-right">{t('settings.thAction')}</TH>
               </TR>
             </THead>
             <TBody>
@@ -778,7 +924,7 @@ export const SettingsView: React.FC = () => {
                             : 'bg-muted text-muted-foreground border-border'
                         }`}
                       >
-                        {u.is_active ? 'ACTIVE' : 'INACTIVE'}
+                        {u.is_active ? t('common.active') : t('common.inactive')}
                       </span>
                     </TD>
                     <TD className="text-right">
@@ -789,7 +935,7 @@ export const SettingsView: React.FC = () => {
                         onClick={() => void handleToggleUom(u.id, !u.is_active)}
                         className="text-[11px] px-2.5 py-1"
                       >
-                        {u.is_active ? 'Deactivate' : 'Activate'}
+                        {u.is_active ? t('settings.deactivate') : t('settings.activate')}
                       </Button>
                     </TD>
                   </TR>
@@ -800,35 +946,35 @@ export const SettingsView: React.FC = () => {
 
         <form onSubmit={handleAddUom} className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
           <div>
-            <Label className="mb-1">Code</Label>
+            <Label className="mb-1">{t('settings.uomCode')}</Label>
             <Input
               type="text"
               required
               value={newUomCode}
               onChange={(e) => setNewUomCode(e.target.value.toUpperCase())}
-              placeholder="e.g. CARTON"
+              placeholder={t('settings.uomCodePh')}
               maxLength={10}
               className="w-full font-mono uppercase"
             />
           </div>
           <div>
-            <Label className="mb-1">Name</Label>
+            <Label className="mb-1">{t('settings.uomName')}</Label>
             <Input
               type="text"
               required
               value={newUomName}
               onChange={(e) => setNewUomName(e.target.value)}
-              placeholder="e.g. Cartons"
+              placeholder={t('settings.uomNamePh')}
               className="w-full"
             />
           </div>
           <div>
-            <Label className="mb-1">Description</Label>
+            <Label className="mb-1">{t('settings.uomDesc')}</Label>
             <Input
               type="text"
               value={newUomDescription}
               onChange={(e) => setNewUomDescription(e.target.value)}
-              placeholder="Optional"
+              placeholder={t('settings.uomDescPh')}
               className="w-full"
             />
           </div>
@@ -840,7 +986,7 @@ export const SettingsView: React.FC = () => {
               disabled={uomBusy || !newUomCode.trim() || !newUomName.trim()}
               className="w-full px-4 py-2"
             >
-              {uomBusy ? 'Adding…' : 'Add Unit'}
+              {uomBusy ? t('settings.adding') : t('settings.addUnit')}
             </Button>
           </div>
         </form>
@@ -851,13 +997,12 @@ export const SettingsView: React.FC = () => {
         <div className="flex items-center justify-between gap-2 border-b border-border pb-3">
           <div className="flex items-center gap-2">
             <KeyRound className="w-4 h-4 text-muted-foreground" />
-            <CardTitle>App Lock Passcode</CardTitle>
+            <CardTitle>{t('settings.passTitle')}</CardTitle>
           </div>
           <ShellBadge />
         </div>
         <p className="text-xs text-muted-foreground">
-          The sign-in passcode is stored as a salted hash in the local database — never as plain
-          text. Changing it takes effect on the next sign-in.
+          {t('settings.passNote')}
         </p>
 
         {passcodeMessage && (
@@ -875,7 +1020,7 @@ export const SettingsView: React.FC = () => {
 
         <form onSubmit={handleChangePasscode} className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
-            <Label className="mb-1">Current Passcode</Label>
+            <Label className="mb-1">{t('settings.currentPass')}</Label>
             <Input
               type="password"
               autoComplete="current-password"
@@ -885,7 +1030,7 @@ export const SettingsView: React.FC = () => {
             />
           </div>
           <div>
-            <Label className="mb-1">New Passcode</Label>
+            <Label className="mb-1">{t('settings.newPass')}</Label>
             <Input
               type="password"
               autoComplete="new-password"
@@ -895,7 +1040,7 @@ export const SettingsView: React.FC = () => {
             />
           </div>
           <div>
-            <Label className="mb-1">Confirm New Passcode</Label>
+            <Label className="mb-1">{t('settings.confirmPass')}</Label>
             <Input
               type="password"
               autoComplete="new-password"
@@ -917,32 +1062,35 @@ export const SettingsView: React.FC = () => {
               }
               className="px-5 py-2 shadow-2xs"
             >
-              {changingPasscode ? 'Updating…' : 'Update Passcode'}
+              {changingPasscode ? t('settings.updating') : t('settings.updatePass')}
             </Button>
           </div>
         </form>
       </Card>
 
+      </>
+      )}
+
       {/* Confirmation Modal */}
       <Modal
         isOpen={resetConfirmOpen}
         onClose={() => setResetConfirmOpen(false)}
-        title="Reset Entire Database to Seed State?"
-        subtitle="Restores all original customers, products, stock movements, invoices, and audit logs."
+        title={t('settings.resetTitle')}
+        subtitle={t('settings.resetSubtitle')}
         maxWidth="md"
         footer={
           <>
             <Button variant="secondary" size="sm" onClick={() => setResetConfirmOpen(false)}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button variant="destructive" size="sm" onClick={handleConfirmReset}>
-              Confirm Full Reset
+              {t('settings.confirmReset')}
             </Button>
           </>
         }
       >
         <p className="text-xs text-muted-foreground leading-relaxed">
-          This restores the prototype to its default seeded relational contract (ABC Industries Pvt Ltd, 9 UOMs, 5 customers, 10 products, stock receipts, and demo dispatches).
+          {t('settings.resetBody')}
         </p>
       </Modal>
     </div>

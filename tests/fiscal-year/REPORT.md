@@ -21,10 +21,10 @@ Date: 2026-10-09. Status: GREEN (20/20). Owner answers applied: plain numbers fr
 - `series`: 9 passed (start-at-1, monotonic, auto-rollover, future/invalid rejected with no
   burn, 50 rapid unique+gapless, advance/reject rules, Mar/Apr series separation, idempotent
   rollover, snapshots immune). New-number assertions discriminate old (prefix) behavior.
-- `upgrade`: legacy v6 → only v7 applies; fy backfilled; start defaults 1; legacy number
+- `upgrade`: legacy v6 → only v7+ applies (currently through v15); fy backfilled; start defaults 1; legacy number
   byte-identical; no series fabricated.
 - Regressions: `tsc` (+unused), all vitest files, `test:db`, `test:m1`, `test:m2`,
-  `test:restore` green (version asserts bumped to v7).
+  `test:restore` green (version asserts bumped to v15).
 
 ## Open concerns (for owner review)
 - Duplicate display numbers across FYs (e.g. `5` in both years) — FY column disambiguates;

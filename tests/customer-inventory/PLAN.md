@@ -16,3 +16,11 @@ literals (boundary logic), not app output.
 | 7 | `getMovementBillingStatus(300, 100)` | `PARTIAL` |
 | 8 | `getMovementBillingStatus(300, 0)` | `UNBILLED` |
 | 9 | `getMovementBillingStatus(0, 0)` | `UNBILLED` (degenerate, never BILLED) |
+
+## Print picker grouping (`groupDispatchChallans`, holdings printer icon)
+| # | Input | Expected |
+|---|-------|----------|
+| 10 | two challans, different dates | newest first |
+| 11 | one challan across 2 rows (10 + 20) | single option, quantity 30 |
+| 12 | other customer / other product / RETURN rows mixed in | only matching dispatch option |
+| 13 | empty input, returns only | `[]` (picker shows the empty message) |

@@ -108,6 +108,13 @@ const api = {
     setActive: (id: string, isActive: boolean): Promise<UomResult> =>
       ipcRenderer.invoke('uoms:set-active', { id, is_active: isActive }),
   },
+  language: {
+    list: (): Promise<Record<string, string>> => ipcRenderer.invoke('language:list'),
+    save: (overrides: Record<string, string>): Promise<{ ok: boolean; saved?: number; error?: string; message?: string }> =>
+      ipcRenderer.invoke('language:save', overrides),
+    reset: (keyOrAll: string | { key: string } | { all: true }): Promise<{ ok: boolean; saved?: number; error?: string; message?: string }> =>
+      ipcRenderer.invoke('language:reset', keyOrAll),
+  },
   customers: {
     upsert: (data: unknown): Promise<boolean> => ipcRenderer.invoke('customers:upsert', data),
     delete: (id: string): Promise<boolean> => ipcRenderer.invoke('customers:delete', id),

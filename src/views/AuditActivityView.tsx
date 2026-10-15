@@ -7,8 +7,10 @@ import {
 } from 'lucide-react';
 import { Badge } from '../components/common/Badge';
 import { Card, CardHeader, PageHeader, SearchInput, Select } from '../components/ui';
+import { useT } from '../i18n';
 
 export const AuditActivityView: React.FC = () => {
+  const { t } = useT();
   const { auditLogs } = useAccountingStore();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -37,14 +39,14 @@ export const AuditActivityView: React.FC = () => {
     <div className="space-y-6">
       {/* Top Banner */}
       <PageHeader
-        title="System Audit Trail"
-        subtitle="Immutable business mutation logging • Entity state snapshots • User action attribution"
+        title={t('activity.title')}
+        subtitle={t('activity.subtitle')}
         actions={
           <>
             <SearchInput
               icon={<Search className="w-4 h-4" />}
               type="text"
-              placeholder="Search audit trail..."
+              placeholder={t('activity.searchPh')}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
@@ -53,7 +55,7 @@ export const AuditActivityView: React.FC = () => {
               onChange={(e) => setActionFilter(e.target.value)}
               className="font-mono"
             >
-              <option value="ALL">All Actions ({allActions.length})</option>
+              <option value="ALL">{t('activity.allActions', { count: allActions.length })}</option>
               {allActions.map((a) => (
                 <option key={a} value={a}>
                   {a}
@@ -67,14 +69,14 @@ export const AuditActivityView: React.FC = () => {
       {/* Audit Log Table */}
       <Card className="overflow-hidden shadow-2xs">
         <CardHeader>
-          <span className="text-xs font-mono text-muted-foreground">{filteredLogs.length} Immutable Log Entries</span>
-          <span className="text-xs font-mono text-muted-foreground">Security Guarantee: Passwords and tokens never recorded</span>
+          <span className="text-xs font-mono text-muted-foreground">{t('activity.entries', { count: filteredLogs.length })}</span>
+          <span className="text-xs font-mono text-muted-foreground">{t('activity.guarantee')}</span>
         </CardHeader>
 
         <div className="divide-y divide-border text-xs font-mono">
           {filteredLogs.length === 0 ? (
             <div className="p-8 text-center text-muted-foreground font-sans text-xs">
-              No audit logs found matching criteria.
+              {t('activity.empty')}
             </div>
           ) : (
             filteredLogs.map((log) => {
@@ -107,7 +109,7 @@ export const AuditActivityView: React.FC = () => {
                           <span className="text-muted-foreground text-[11px]">ID: #{log.entity_id}</span>
                         </div>
                         <div className="text-muted-foreground text-[11px] font-sans mt-0.5">
-                          Initiated by <span className="font-semibold text-foreground">{log.user_name}</span> (ID: {log.user_id})
+                          {t('activity.initiatedBy', { user: log.user_name, id: log.user_id })}
                         </div>
                       </div>
                     </div>
@@ -124,7 +126,7 @@ export const AuditActivityView: React.FC = () => {
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {log.new_data && (
                           <div>
-                            <div className="font-bold text-foreground mb-1">State Mutation Data:</div>
+                            <div className="font-bold text-foreground mb-1">{t('activity.mutationData')}</div>
                             <pre className="p-2.5 bg-primary text-primary-foreground rounded-md overflow-x-auto text-[10px]">
                               {JSON.stringify(log.new_data, null, 2)}
                             </pre>
@@ -133,7 +135,7 @@ export const AuditActivityView: React.FC = () => {
 
                         {log.old_data && (
                           <div>
-                            <div className="font-bold text-foreground mb-1">Prior State:</div>
+                            <div className="font-bold text-foreground mb-1">{t('activity.priorState')}</div>
                             <pre className="p-2.5 bg-muted text-foreground border border-border rounded overflow-x-auto text-[10px]">
                               {JSON.stringify(log.old_data, null, 2)}
                             </pre>

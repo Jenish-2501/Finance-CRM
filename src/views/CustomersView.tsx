@@ -10,6 +10,7 @@ import {
 import { Modal } from '../components/common/Modal';
 import { Badge } from '../components/common/Badge';
 import { Button, PageHeader, SearchInput, TableShell, Table, THead, TBody, TR, TH, TD, Tabs, Alert, Input, Label, Textarea } from '../components/ui';
+import { useT } from '../i18n';
 import { customerMatchesQuery } from '../components/common/CustomerPicker';
 
 interface CustomersViewProps {
@@ -21,6 +22,7 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
   onSelectCustomerForBilling,
   onOpenInvoice
 }) => {
+  const { t } = useT();
   const {
     customers,
     createCustomer,
@@ -39,11 +41,16 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
   const [detailTab, setDetailTab] = useState<'overview' | 'inventory' | 'invoices' | 'payments' | 'ledger' | 'activity'>('overview');
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  // Which customer the edit modal is saving to. Separate from
+  // selectedCustomerId (detail drawer): opening edit from the table pencil
+  // must not pop the drawer open, and saving must not depend on it.
+  const [editingCustomerId, setEditingCustomerId] = useState<string | null>(null);
   const [formError, setFormError] = useState('');
 
   // Form states
   const [formData, setFormData] = useState({
     customer_name: '',
+    gujarati_name: '',
     customer_number: '',
     pan: '',
     gst_number: '',
@@ -67,6 +74,7 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
   const handleOpenCreate = () => {
     setFormData({
       customer_name: '',
+      gujarati_name: '',
       customer_number: suggestNextCustomerNumber(),
       pan: '',
       gst_number: '',
@@ -88,6 +96,7 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
   const handleOpenEdit = (c: Customer) => {
     setFormData({
       customer_name: c.customer_name,
+      gujarati_name: c.gujarati_name ?? '',
       customer_number: c.customer_number || '',
       pan: c.pan,
       gst_number: c.gst_number,
@@ -103,6 +112,7 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
       ifsc: c.bank_details?.ifsc || ''
     });
     setFormError('');
+    setEditingCustomerId(c.id);
     setIsEditModalOpen(true);
   };
 
@@ -110,10 +120,15 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
     e.preventDefault();
     setFormError('');
     if (!formData.customer_name.trim()) return;
+    if (formData.gujarati_name.trim().length > 200) {
+      setFormError(t('customers.errNickGuTooLong'));
+      return;
+    }
     // Empty number → store auto-assigns the next free plain number.
 
     const result = createCustomer({
       customer_name: formData.customer_name.trim(),
+      gujarati_name: formData.gujarati_name.trim() || null,
       customer_number: formData.customer_number.trim().toUpperCase(),
       pan: formData.pan.trim().toUpperCase(),
       gst_number: formData.gst_number.trim().toUpperCase(),
@@ -142,14 +157,19 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
   const handleSaveEdit = (e: React.FormEvent) => {
     e.preventDefault();
     setFormError('');
-    if (!selectedCustomerId || !formData.customer_name.trim()) return;
+    if (!editingCustomerId || !formData.customer_name.trim()) return;
     if (!formData.customer_number.trim()) {
       setFormError('Customer number is required.');
       return;
     }
+    if (formData.gujarati_name.trim().length > 200) {
+      setFormError(t('customers.errNickGuTooLong'));
+      return;
+    }
 
-    const result = updateCustomer(selectedCustomerId, {
+    const result = updateCustomer(editingCustomerId, {
       customer_name: formData.customer_name.trim(),
+      gujarati_name: formData.gujarati_name.trim() || null,
       customer_number: formData.customer_number.trim().toUpperCase(),
       pan: formData.pan.trim().toUpperCase(),
       gst_number: formData.gst_number.trim().toUpperCase(),
@@ -171,6 +191,7 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
       return;
     }
 
+    setEditingCustomerId(null);
     setIsEditModalOpen(false);
   };
 
@@ -194,20 +215,20 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
     <div className="space-y-6">
       {/* Header & Controls */}
       <PageHeader
-        title="Customer Directory"
-        subtitle="Normalized entity ledger • Tax identification and consignment reconciliation"
+        title={t('customers.title')}
+        subtitle={t('customers.subtitle')}
         actions={
           <>
             <SearchInput
               icon={<Search className="w-4 h-4" />}
               type="text"
-              placeholder="Search number, name or GSTIN..."
+              placeholder={t('customers.searchPh')}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
             <Button variant="primary" size="md" onClick={handleOpenCreate}>
               <Plus className="w-3.5 h-3.5" />
-              <span>Add Customer</span>
+              <span>{t('customers.add')}</span>
             </Button>
           </>
         }
@@ -217,24 +238,24 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
       <TableShell>
         <div className="overflow-x-auto">
           <Table className="text-left border-collapse">
-            <caption className="sr-only">Customers register</caption>
+            <caption className="sr-only">{t('customers.caption')}</caption>
             <THead>
               <TR className="hover:bg-transparent">
-                <TH scope="col">Customer Entity</TH>
-                <TH scope="col">Customer No.</TH>
-                <TH scope="col">State / Code</TH>
-                <TH scope="col">GSTIN / PAN</TH>
-                <TH scope="col">Contact</TH>
-                <TH scope="col" className="text-right">Outstanding Receivables</TH>
-                <TH scope="col" className="text-center">Status</TH>
-                <TH scope="col" className="text-right px-4">Actions</TH>
+                <TH scope="col">{t('customers.thEntity')}</TH>
+                <TH scope="col">{t('customers.thNumber')}</TH>
+                <TH scope="col">{t('customers.thState')}</TH>
+                <TH scope="col">{t('customers.thGst')}</TH>
+                <TH scope="col">{t('customers.thContact')}</TH>
+                <TH scope="col" className="text-right">{t('customers.thOutstanding')}</TH>
+                <TH scope="col" className="text-center">{t('customers.thStatus')}</TH>
+                <TH scope="col" className="text-right px-4">{t('customers.thActions')}</TH>
               </TR>
             </THead>
             <TBody>
               {filteredCustomers.length === 0 ? (
                 <tr>
                   <TD colSpan={8} className="py-8 text-center text-muted-foreground text-xs">
-                    No customers match your search query.
+                    {t('customers.empty')}
                   </TD>
                 </tr>
               ) : (
@@ -253,6 +274,11 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
                         <div className="font-semibold group-hover:text-foreground">
                           {cust.customer_name}
                         </div>
+                        {cust.gujarati_name?.trim() ? (
+                          <div className="text-xs text-foreground/80">
+                            {cust.gujarati_name}
+                          </div>
+                        ) : null}
                         <div className="text-[11px] text-muted-foreground font-mono">
                           <span className="font-bold text-foreground">{cust.customer_number || '—'}</span>
                           {' '}• ID: #{cust.id}
@@ -270,7 +296,7 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
                       </TD>
 
                       <TD className="font-mono text-[11px]">
-                        <div className="text-foreground font-semibold">{cust.gst_number || 'Unregistered'}</div>
+                        <div className="text-foreground font-semibold">{cust.gst_number || t('common.unregistered')}</div>
                         <div className="text-muted-foreground">{cust.pan}</div>
                       </TD>
 
@@ -290,7 +316,7 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
 
                       <TD className="text-center">
                         <Badge variant={cust.is_active ? 'success' : 'neutral'}>
-                          {cust.is_active ? 'ACTIVE' : 'INACTIVE'}
+                          {cust.is_active ? t('common.active') : t('common.inactive')}
                         </Badge>
                       </TD>
 
@@ -301,17 +327,17 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
                               variant="primary"
                               size="sm"
                               onClick={() => onSelectCustomerForBilling(cust.id)}
-                              title="Open billing wizard for this customer"
+                              title={t('customers.billTitle')}
                               className="text-[11px] px-2 py-1"
                             >
-                              Bill
+                              {t('customers.rowBill')}
                             </Button>
                           )}
                           <Button
                             variant="secondary"
                             size="icon"
                             onClick={() => handleOpenEdit(cust)}
-                            title="Edit details"
+                            title={t('customers.editTitle')}
                           >
                             <Edit2 className="w-3.5 h-3.5" />
                           </Button>
@@ -331,13 +357,17 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
         <Modal
           isOpen={Boolean(selectedCustomerId)}
           onClose={() => setSelectedCustomerId(null)}
-          title={selectedCustomer.customer_name}
-          subtitle={`No: ${selectedCustomer.customer_number || '—'} • GSTIN: ${selectedCustomer.gst_number || 'N/A'} • ${selectedCustomer.state}`}
+          title={
+            selectedCustomer.gujarati_name?.trim()
+              ? `${selectedCustomer.customer_name} (${selectedCustomer.gujarati_name.trim()})`
+              : selectedCustomer.customer_name
+          }
+          subtitle={t('customers.drawerSubtitle', { no: selectedCustomer.customer_number || '—', gstin: selectedCustomer.gst_number || t('common.na'), state: selectedCustomer.state })}
           maxWidth="4xl"
           footer={
             <div className="flex justify-between w-full items-center">
               <div className="font-mono text-xs text-muted-foreground">
-                Outstanding Balance:{' '}
+                {t('customers.outstandingBalance')}{' '}
                 <span className="font-bold text-foreground">
                   {formatINR(getCustomerOutstanding(selectedCustomer.id))}
                 </span>
@@ -352,11 +382,11 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
                       setSelectedCustomerId(null);
                     }}
                   >
-                    Open Billing Wizard
+                    {t('customers.openBilling')}
                   </Button>
                 )}
                 <Button variant="secondary" size="sm" onClick={() => setSelectedCustomerId(null)}>
-                  Close
+                  {t('common.close')}
                 </Button>
               </div>
             </div>
@@ -365,16 +395,16 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
           <div className="space-y-4">
             {/* Tabs */}
             <Tabs
-              ariaLabel="Customer detail views"
+              ariaLabel={t('customers.drawerTabsLabel')}
               activeId={detailTab}
               onSelect={(id) => setDetailTab(id as 'overview' | 'inventory' | 'invoices' | 'payments' | 'ledger' | 'activity')}
               tabs={[
-                { id: 'overview', label: 'Entity Profile' },
-                { id: 'inventory', label: `Inventory Consignments (${customerSummary.length})` },
-                { id: 'invoices', label: `Invoices (${customerInvoices.length})` },
-                { id: 'payments', label: `Collections (${customerPayments.length})` },
-                { id: 'ledger', label: 'Financial Ledger' },
-                { id: 'activity', label: 'Audit History' },
+                { id: 'overview', label: t('customers.drawerOverview') },
+                { id: 'inventory', label: t('customers.drawerInventory', { count: customerSummary.length }) },
+                { id: 'invoices', label: t('customers.drawerInvoices', { count: customerInvoices.length }) },
+                { id: 'payments', label: t('customers.drawerPayments', { count: customerPayments.length }) },
+                { id: 'ledger', label: t('customers.drawerLedger') },
+                { id: 'activity', label: t('customers.drawerActivity') },
               ]}
             />
 
@@ -383,12 +413,12 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
               <div className="grid grid-cols-2 gap-4 text-xs">
                 <div className="p-3.5 bg-muted border border-border rounded space-y-2">
                   <div className="font-semibold text-foreground uppercase tracking-wide text-[11px]">
-                    Tax &amp; Identity Details
+                    {t('customers.taxIdentity')}
                   </div>
                   <div className="space-y-1 font-mono">
                     <div>
                       <span className="text-muted-foreground">GSTIN:</span>{' '}
-                      <span className="font-bold text-foreground">{selectedCustomer.gst_number || 'N/A'}</span>
+                      <span className="font-bold text-foreground">{selectedCustomer.gst_number || t('common.na')}</span>
                     </div>
                     <div>
                       <span className="text-muted-foreground">PAN:</span>{' '}
@@ -399,7 +429,7 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
                       <span>{selectedCustomer.state} (Code: {getCustomerStateCode(selectedCustomer)})</span>
                     </div>
                     <div>
-                      <span className="text-muted-foreground">Credit Limit:</span>{' '}
+                      <span className="text-muted-foreground">{t('customers.creditLimit')}</span>{' '}
                       <span>{formatINR(selectedCustomer.credit_limit || 0)}</span>
                     </div>
                   </div>
@@ -407,7 +437,7 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
 
                 <div className="p-3.5 bg-muted border border-border rounded space-y-2">
                   <div className="font-semibold text-foreground uppercase tracking-wide text-[11px]">
-                    Billing Address &amp; Contact
+                    {t('customers.billingContact')}
                   </div>
                   <div className="text-foreground space-y-1">
                     <div>{selectedCustomer.address}</div>
@@ -426,26 +456,26 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
             {detailTab === 'inventory' && (
               <div className="space-y-3">
                 <div className="text-xs text-muted-foreground">
-                  Physical stock held by customer vs. unbilled quantity. Billed quantity is derived from explicit invoice allocations.
+                  {t('customers.invIntro')}
                 </div>
                 <div className="border border-border rounded overflow-hidden">
                   <table className="w-full text-left text-xs border-collapse">
-                  <caption className="sr-only">Customer inventory consignments</caption>
+                  <caption className="sr-only">{t('customers.invCaption')}</caption>
                   <thead>
                       <tr className="bg-muted font-mono text-[11px] text-muted-foreground border-b border-border">
-                        <th scope="col" className="py-2.5 px-3">Product</th>
-                        <th scope="col" className="py-2.5 px-2 text-right">Received</th>
-                        <th scope="col" className="py-2.5 px-2 text-right">Returned</th>
-                        <th scope="col" className="py-2.5 px-2 text-right">Current Held</th>
-                        <th scope="col" className="py-2.5 px-2 text-right">Billed Qty</th>
-                        <th scope="col" className="py-2.5 px-3 text-right">Unbilled Qty</th>
+                        <th scope="col" className="py-2.5 px-3">{t('customers.thProduct')}</th>
+                        <th scope="col" className="py-2.5 px-2 text-right">{t('customers.thReceived')}</th>
+                        <th scope="col" className="py-2.5 px-2 text-right">{t('customers.thReturned')}</th>
+                        <th scope="col" className="py-2.5 px-2 text-right">{t('customers.thHeld')}</th>
+                        <th scope="col" className="py-2.5 px-2 text-right">{t('customers.thBilledQty')}</th>
+                        <th scope="col" className="py-2.5 px-3 text-right">{t('customers.thUnbilledQty')}</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border font-mono">
                       {customerSummary.length === 0 ? (
                         <tr>
                           <td colSpan={6} className="py-6 text-center text-muted-foreground">
-                            No inventory movements recorded for this customer.
+                            {t('customers.noMovements')}
                           </td>
                         </tr>
                       ) : (
@@ -477,7 +507,7 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
             {detailTab === 'invoices' && (
               <div className="space-y-2">
                 {customerInvoices.length === 0 ? (
-                  <div className="py-8 text-center text-muted-foreground text-xs">No invoices created yet.</div>
+                  <div className="py-8 text-center text-muted-foreground text-xs">{t('customers.noInvoices')}</div>
                 ) : (
                   <div className="border border-border rounded divide-y divide-border text-xs">
                     {customerInvoices.map((inv) => (
@@ -507,7 +537,7 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
                             </Badge>
                           </div>
                           <div className="text-[11px] text-muted-foreground font-mono mt-0.5">
-                            Period: {inv.billing_period_start} to {inv.billing_period_end}
+                            {t('customers.invPeriod', { from: inv.billing_period_start, to: inv.billing_period_end })}
                           </div>
                         </div>
 
@@ -528,7 +558,7 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
             {detailTab === 'payments' && (
               <div className="space-y-2">
                 {customerPayments.length === 0 ? (
-                  <div className="py-8 text-center text-muted-foreground text-xs">No payments recorded yet.</div>
+                  <div className="py-8 text-center text-muted-foreground text-xs">{t('dashboard.noPayments')}</div>
                 ) : (
                   <div className="border border-border rounded divide-y divide-border text-xs">
                     {customerPayments.map((p) => (
@@ -536,7 +566,7 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
                         <div>
                           <div className="font-mono font-semibold text-emerald-800 dark:text-emerald-300">{formatINR(p.amount)}</div>
                           <div className="text-[11px] text-muted-foreground font-mono">
-                            Method: {p.payment_method} • Ref: {p.reference_number || 'N/A'}
+                            {t('customers.payMethod', { method: p.payment_method, ref: p.reference_number || t('common.na') })}
                           </div>
                         </div>
                         <div className="text-right font-mono text-[11px] text-muted-foreground">
@@ -553,22 +583,22 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
             {detailTab === 'ledger' && (
               <div className="border border-border rounded overflow-hidden">
                 <table className="w-full text-left text-xs border-collapse">
-                  <caption className="sr-only">Customer ledger transactions</caption>
+                  <caption className="sr-only">{t('customers.ledgerCaption')}</caption>
                   <thead>
                     <tr className="bg-muted font-mono text-[11px] text-muted-foreground border-b border-border">
-                      <th scope="col" className="py-2.5 px-3">Date</th>
-                      <th scope="col" className="py-2.5 px-3">Ref</th>
-                      <th scope="col" className="py-2.5 px-3">Description</th>
-                      <th scope="col" className="py-2.5 px-2 text-right">Debit (+)</th>
-                      <th scope="col" className="py-2.5 px-2 text-right">Credit (-)</th>
-                      <th scope="col" className="py-2.5 px-3 text-right">Running Balance</th>
+                      <th scope="col" className="py-2.5 px-3">{t('customers.thDate')}</th>
+                      <th scope="col" className="py-2.5 px-3">{t('customers.thRef')}</th>
+                      <th scope="col" className="py-2.5 px-3">{t('customers.thDesc')}</th>
+                      <th scope="col" className="py-2.5 px-2 text-right">{t('customers.thDebit')}</th>
+                      <th scope="col" className="py-2.5 px-2 text-right">{t('customers.thCredit')}</th>
+                      <th scope="col" className="py-2.5 px-3 text-right">{t('customers.thBalance')}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border font-mono text-[11px]">
                     {customerLedger.length === 0 ? (
                       <tr>
                         <td colSpan={6} className="py-6 text-center text-muted-foreground">
-                          No financial ledger entries.
+                          {t('customers.noLedger')}
                         </td>
                       </tr>
                     ) : (
@@ -600,7 +630,7 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
             {detailTab === 'activity' && (
               <div className="space-y-2 max-h-60 overflow-y-auto">
                 {customerAudit.length === 0 ? (
-                  <div className="py-6 text-center text-muted-foreground text-xs">No audit logs for this customer.</div>
+                  <div className="py-6 text-center text-muted-foreground text-xs">{t('customers.noAudit')}</div>
                 ) : (
                   customerAudit.map((log) => (
                     <div key={log.id} className="p-2.5 bg-muted border border-border rounded text-xs">
@@ -608,7 +638,7 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
                         <span className="font-semibold text-foreground">{log.action}</span>
                         <span className="text-muted-foreground">{new Date(log.created_at).toLocaleString()}</span>
                       </div>
-                      <div className="text-muted-foreground text-[11px] mt-0.5">By {log.user_name}</div>
+                      <div className="text-muted-foreground text-[11px] mt-0.5">{t('dashboard.byUser', { user: log.user_name })}</div>
                     </div>
                   ))
                 )}
@@ -622,8 +652,8 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
       <Modal
         isOpen={isCreateModalOpen}
         onClose={() => setIsCreateModalOpen(false)}
-        title="Add New Customer"
-        subtitle="Creates a normalized customer entity in database"
+        title={t('customers.createTitle')}
+        subtitle={t('customers.createSubtitle')}
         maxWidth="2xl"
       >
         <form onSubmit={handleSaveCreate} className="space-y-4 text-xs">
@@ -632,93 +662,106 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
           )}
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <Label className="mb-1">Customer Number *</Label>
+              <Label className="mb-1">{t('customers.fNumber')}</Label>
               <Input
                 type="text"
                 required
                 value={formData.customer_number}
                 onChange={(e) => setFormData({ ...formData, customer_number: e.target.value.toUpperCase() })}
                 className="w-full font-mono uppercase"
-                placeholder="Auto-assigned in sequence"
+                placeholder={t('customers.fNumberPh')}
               />
-              <p className="text-[10px] text-muted-foreground mt-0.5">Auto-filled with the next free number — editable, must stay unique.</p>
+              <p className="text-[10px] text-muted-foreground mt-0.5">{t('customers.fNumberHint')}</p>
             </div>
 
             <div>
-              <Label className="mb-1">Mobile / Phone</Label>
+              <Label className="mb-1">{t('customers.fMobile')}</Label>
               <Input
                 type="text"
                 value={formData.mobile}
                 onChange={(e) => setFormData({ ...formData, mobile: e.target.value })}
                 className="w-full font-mono"
-                placeholder="+91 98250 00000"
+                placeholder={t('customers.fMobilePh')}
               />
             </div>
 
             <div className="col-span-2">
-              <Label className="mb-1">Customer / Legal Name *</Label>
+              <Label className="mb-1">{t('customers.fName')}</Label>
               <Input
                 type="text"
                 required
                 value={formData.customer_name}
                 onChange={(e) => setFormData({ ...formData, customer_name: e.target.value })}
                 className="w-full focus:ring-1 focus:ring-ring focus:outline-none"
-                placeholder="e.g. Acme Infra Corporation Pvt Ltd"
+                placeholder={t('customers.fNamePh')}
               />
             </div>
 
+            <div className="col-span-2">
+              <Label className="mb-1">{t('customers.fNickGu')}</Label>
+              <Input
+                type="text"
+                value={formData.gujarati_name}
+                onChange={(e) => setFormData({ ...formData, gujarati_name: e.target.value })}
+                className="w-full"
+                placeholder={t('customers.fNickGuPh')}
+                maxLength={200}
+              />
+              <p className="text-[10px] text-muted-foreground mt-0.5">{t('customers.fNickGuHint')}</p>
+            </div>
+
             <div>
-              <Label className="mb-1">GSTIN Number</Label>
+              <Label className="mb-1">{t('customers.fGstin')}</Label>
               <Input
                 type="text"
                 value={formData.gst_number}
                 onChange={(e) => setFormData({ ...formData, gst_number: e.target.value })}
                 className="w-full uppercase font-mono"
-                placeholder="e.g. 24AAACA1234A1Z5"
+                placeholder={t('customers.fGstinPh')}
               />
             </div>
 
             <div>
-              <Label className="mb-1">PAN Number</Label>
+              <Label className="mb-1">{t('customers.fPan')}</Label>
               <Input
                 type="text"
                 value={formData.pan}
                 onChange={(e) => setFormData({ ...formData, pan: e.target.value })}
                 className="w-full uppercase font-mono"
-                placeholder="e.g. AAACA1234A"
+                placeholder={t('customers.fPanPh')}
               />
             </div>
 
             <div className="col-span-2">
-              <Label className="mb-1">Street Address</Label>
+              <Label className="mb-1">{t('customers.fAddress')}</Label>
               <Textarea
                 rows={3}
                 value={formData.address}
                 onChange={(e) => setFormData({ ...formData, address: e.target.value })}
                 className="w-full"
-                placeholder="Plot 45, GIDC Industrial Estate"
+                placeholder={t('customers.fAddressPh')}
               />
             </div>
 
             <div>
-              <Label className="mb-1">City</Label>
+              <Label className="mb-1">{t('customers.fCity')}</Label>
               <Input
                 type="text"
                 value={formData.city}
                 onChange={(e) => setFormData({ ...formData, city: e.target.value })}
                 className="w-full"
-                placeholder="Surat"
+                placeholder={t('customers.fCityPh')}
               />
-              <p className="text-[10px] text-muted-foreground mt-0.5">Defaults to Surat — editable.</p>
+              <p className="text-[10px] text-muted-foreground mt-0.5">{t('customers.fCityHint')}</p>
             </div>
           </div>
 
           <div className="flex justify-end gap-2 pt-3 border-t border-border">
             <Button type="button" variant="secondary" size="sm" onClick={() => setIsCreateModalOpen(false)}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button type="submit" variant="primary" size="sm">
-              Create Customer
+              {t('customers.create')}
             </Button>
           </div>
         </form>
@@ -727,9 +770,12 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
       {/* Edit Customer Modal */}
       <Modal
         isOpen={isEditModalOpen}
-        onClose={() => setIsEditModalOpen(false)}
-        title="Edit Customer"
-        subtitle="Updates master customer record"
+        onClose={() => {
+          setIsEditModalOpen(false);
+          setEditingCustomerId(null);
+        }}
+        title={t('customers.editTitle2')}
+        subtitle={t('customers.editSubtitle')}
         maxWidth="2xl"
       >
         <form onSubmit={handleSaveEdit} className="space-y-4 text-xs">
@@ -738,7 +784,7 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
           )}
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <Label className="mb-1">Customer Number *</Label>
+              <Label className="mb-1">{t('customers.fNumber')}</Label>
               <Input
                 type="text"
                 required
@@ -746,11 +792,11 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
                 onChange={(e) => setFormData({ ...formData, customer_number: e.target.value.toUpperCase() })}
                 className="w-full font-mono uppercase"
               />
-              <p className="text-[10px] text-muted-foreground mt-0.5">Unique code — search by it in billing, ledger &amp; dispatches.</p>
+              <p className="text-[10px] text-muted-foreground mt-0.5">{t('customers.fNumberUnique')}</p>
             </div>
 
             <div>
-              <Label className="mb-1">Mobile / Phone</Label>
+              <Label className="mb-1">{t('customers.fMobile')}</Label>
               <Input
                 type="text"
                 value={formData.mobile}
@@ -760,7 +806,7 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
             </div>
 
             <div className="col-span-2">
-              <Label className="mb-1">Customer / Legal Name *</Label>
+              <Label className="mb-1">{t('customers.fName')}</Label>
               <Input
                 type="text"
                 required
@@ -770,8 +816,21 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
               />
             </div>
 
+            <div className="col-span-2">
+              <Label className="mb-1">{t('customers.fNickGu')}</Label>
+              <Input
+                type="text"
+                value={formData.gujarati_name}
+                onChange={(e) => setFormData({ ...formData, gujarati_name: e.target.value })}
+                className="w-full"
+                placeholder={t('customers.fNickGuPh')}
+                maxLength={200}
+              />
+              <p className="text-[10px] text-muted-foreground mt-0.5">{t('customers.fNickGuHint')}</p>
+            </div>
+
             <div>
-              <Label className="mb-1">GSTIN Number</Label>
+              <Label className="mb-1">{t('customers.fGstin')}</Label>
               <Input
                 type="text"
                 value={formData.gst_number}
@@ -781,7 +840,7 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
             </div>
 
             <div>
-              <Label className="mb-1">PAN Number</Label>
+              <Label className="mb-1">{t('customers.fPan')}</Label>
               <Input
                 type="text"
                 value={formData.pan}
@@ -791,7 +850,7 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
             </div>
 
             <div className="col-span-2">
-              <Label className="mb-1">Street Address</Label>
+              <Label className="mb-1">{t('customers.fAddress')}</Label>
               <Textarea
                 rows={3}
                 value={formData.address}
@@ -801,7 +860,7 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
             </div>
 
             <div>
-              <Label className="mb-1">City</Label>
+              <Label className="mb-1">{t('customers.fCity')}</Label>
               <Input
                 type="text"
                 value={formData.city}
@@ -812,11 +871,19 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
           </div>
 
           <div className="flex justify-end gap-2 pt-3 border-t border-border">
-            <Button type="button" variant="secondary" size="sm" onClick={() => setIsEditModalOpen(false)}>
-              Cancel
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                setIsEditModalOpen(false);
+                setEditingCustomerId(null);
+              }}
+            >
+              {t('common.cancel')}
             </Button>
             <Button type="submit" variant="primary" size="sm">
-              Update Customer
+              {t('customers.update')}
             </Button>
           </div>
         </form>
