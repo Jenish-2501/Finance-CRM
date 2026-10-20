@@ -232,6 +232,7 @@ export const ReportsView: React.FC = () => {
       const doc = buildMovementLedgerPdf({
         business: businessSettings,
         logoDataUrl: businessSettings.logo_data ?? undefined,
+        customerGujaratiName: movCustomer?.gujarati_name?.trim() || undefined,
         customerName: movCustomer?.customer_name || effectiveMovCustomerId,
         customerMeta: custLabel,
         periodLabel: movPeriodLabel,

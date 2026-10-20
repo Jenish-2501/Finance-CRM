@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import type Database from 'better-sqlite3';
 import { logger } from '../utils/logger.js';
 import * as m0001 from './migrations/0001_initial.js';
@@ -98,15 +100,105 @@ export function getAppliedVersions(db: Database.Database): number[] {
   return rows.map((r) => r.version);
 }
 
+export interface RunMigrationsOptions {
+  /**
+   * Directory for the automatic pre-migration safety snapshot. When set and
+   * the database has pending migrations, a `VACUUM INTO` snapshot
+   * (`pre-migrate-<stamp>.sqlite`) is taken BEFORE any write, so a failed
+   * or half-applied update can always be restored. Omitted in tests that
+   * don't need snapshot coverage.
+   */
+  backupsDir?: string;
+}
+
+export interface RunMigrationsResult {
+  applied: number[];
+  /** Absolute path of the pre-migration snapshot, or null when none taken. */
+  preMigrateBackup: string | null;
+}
+
+// Safety snapshots are separate from manual `app-*` backups (different
+// prefix, so pruneBackups never evicts them) and retention-capped.
+export const MAX_PRE_MIGRATE_BACKUPS = 5;
+
+/**
+ * Transaction-aware snapshot of the live DB, taken before migrations run.
+ * Returns the snapshot path, or null when there is nothing to protect
+ * (brand-new database) or the snapshot itself fails (logged loudly — the
+ * caller still proceeds, because every migration is atomic and a snapshot
+ * failure must never brick startup).
+ */
+export function snapshotBeforeMigrate(
+  db: Database.Database,
+  backupsDir: string
+): string | null {
+  try {
+    fs.mkdirSync(backupsDir, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    let file = path.join(backupsDir, `pre-migrate-${stamp}.sqlite`);
+    let n = 1;
+    while (fs.existsSync(file)) {
+      file = path.join(backupsDir, `pre-migrate-${stamp}-${n}.sqlite`);
+      n += 1;
+    }
+    // Atomic and safe against concurrent readers; must run outside any
+    // transaction (callers snapshot before the per-migration tx loop).
+    db.prepare('VACUUM INTO ?').run(file);
+    prunePreMigrateBackups(backupsDir);
+    return file;
+  } catch (err) {
+    logger.error('database.pre_migrate_backup_failed', {});
+    return null;
+  }
+}
+
+/** Keeps the newest MAX_PRE_MIGRATE_BACKUPS safety snapshots. */
+export function prunePreMigrateBackups(backupsDir: string): void {
+  let files: string[];
+  try {
+    files = fs
+      .readdirSync(backupsDir)
+      .filter((f) => f.startsWith('pre-migrate-') && f.endsWith('.sqlite'))
+      .map((f) => path.join(backupsDir, f))
+      .sort();
+  } catch {
+    return;
+  }
+  while (files.length > MAX_PRE_MIGRATE_BACKUPS) {
+    const oldest = files.shift();
+    if (!oldest) break;
+    try {
+      fs.unlinkSync(oldest);
+    } catch {
+      break;
+    }
+  }
+}
+
 /**
  * Applies pending migrations in order, inside per-migration transactions.
  * Update-safe: existing DBs created by the pre-Drizzle code (tables exist,
  * no _migrations rows) adopt the baseline without re-running DDL.
  */
-export function runMigrations(db: Database.Database): { applied: number[] } {
+export function runMigrations(
+  db: Database.Database,
+  opts: RunMigrationsOptions = {}
+): RunMigrationsResult {
   db.exec(MIGRATIONS_TABLE_SQL);
   const applied = new Set<number>(getAppliedVersions(db));
   const newlyApplied: number[] = [];
+
+  const isFreshInstall =
+    applied.size === 0 && !V1_TABLES.every((t) => tableExists(db, t));
+  const hasPending = MIGRATIONS.some((m) => !applied.has(m.version));
+  let preMigrateBackup: string | null = null;
+  if (!isFreshInstall && hasPending && opts.backupsDir) {
+    preMigrateBackup = snapshotBeforeMigrate(db, opts.backupsDir);
+    logger.info('database.pre_migrate_backup', {
+      file: preMigrateBackup,
+      pending: MIGRATIONS.filter((m) => !applied.has(m.version)).map((m) => m.version),
+    });
+  }
 
   if (applied.size === 0 && V1_TABLES.every((t) => tableExists(db, t))) {
     // Pre-existing installation: baseline schema already present.
@@ -139,7 +231,7 @@ export function runMigrations(db: Database.Database): { applied: number[] } {
     logger.info('database.migration_applied', { version: m.version, name: m.name });
   }
 
-  return { applied: newlyApplied };
+  return { applied: newlyApplied, preMigrateBackup };
 }
 
 export function getMigrationStatus(db: Database.Database): {

@@ -31,7 +31,13 @@ export const InvoicePrintView: React.FC<InvoicePrintViewProps> = ({
   onOpenPayment
 }) => {
   const { t } = useT();
-  const { customerInventoryMovements, uoms, getPieceWeightMapping, businessSettings } = useAccountingStore();
+  const { customerInventoryMovements, uoms, getPieceWeightMapping, businessSettings, customers } = useAccountingStore();
+  // Gujarati nickname under the legal name: frozen snapshot first, live
+  // master record as fallback for invoices billed before it was captured.
+  const customerGuName =
+    invoice.customer_snapshot.gujarati_name?.trim() ||
+    customers[invoice.customer_id]?.gujarati_name?.trim() ||
+    '';
   const activePayments = payments.filter((p) => p.status === 'ACTIVE');
   const totalPaid = activePayments.reduce((sum, p) => sum + p.amount, 0);
   const outstanding = invoice.status === 'CANCELLED' ? 0 : Math.max(0, invoice.grand_total - totalPaid);
@@ -88,7 +94,7 @@ export const InvoicePrintView: React.FC<InvoicePrintViewProps> = ({
   const handleDownloadPDF = async () => {
     const safeNumber = invoice.invoice_number.replace(/[^a-z0-9-_]+/gi, '-');
     const filename = `Invoice-${safeNumber}.pdf`;
-    const doc = buildInvoicePdf({ invoice, items, payments, allocations, pcsRef: pcsByItem, allocationLines: allocChallanLines, logoDataUrl: businessSettings.logo_data ?? undefined });
+    const doc = buildInvoicePdf({ invoice, items, payments, allocations, pcsRef: pcsByItem, allocationLines: allocChallanLines, logoDataUrl: businessSettings.logo_data ?? undefined, customerGujaratiName: customerGuName || undefined });
     // Web fallback: direct jsPDF download. Electron: save dialog to chosen folder.
     if (!window.electronAPI?.files?.savePDFBytes) {
       doc.save(filename);
@@ -238,7 +244,7 @@ export const InvoicePrintView: React.FC<InvoicePrintViewProps> = ({
               Billed To (Customer Snapshot):
             </div>
             <div className="font-bold text-sm text-neutral-950">
-              {invoice.customer_snapshot.customer_name}
+              {customerGuName || invoice.customer_snapshot.customer_name}
             </div>
             <div className="text-neutral-600 mt-1 leading-relaxed">
               {invoice.customer_snapshot.address}, {invoice.customer_snapshot.city},{' '}

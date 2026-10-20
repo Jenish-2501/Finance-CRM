@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { openDatabase, getSqlite, getDrizzle, getDatabaseFilePath, closeDatabase } from './client.js';
 import { runMigrations, getMigrationStatus } from './migrate.js';
 import { ensureSystemDefaults } from '../services/systemSeed.js';
@@ -22,7 +23,10 @@ export interface DatabaseStatus {
 export function initDatabase(userDataPath: string): void {
   openDatabase(userDataPath);
   const sqlite = getSqlite();
-  runMigrations(sqlite);
+  // Safety first: when this launch carries pending migrations (i.e. the app
+  // was just updated), a pre-migration snapshot lands in <userData>/backups
+  // before anything is written. Fresh installs take none (nothing to lose).
+  runMigrations(sqlite, { backupsDir: path.join(userDataPath, 'backups') });
 
   const status = getMigrationStatus(sqlite);
   if (status.pending.length > 0) {

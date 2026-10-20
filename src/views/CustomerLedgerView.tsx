@@ -180,7 +180,7 @@ export const CustomerLedgerView: React.FC<CustomerLedgerViewProps> = ({
           <div className="p-4 bg-muted border border-border rounded text-xs grid grid-cols-2 gap-4">
             <div>
               <div className="text-[10px] font-semibold text-muted-foreground uppercase">Statement For:</div>
-              <div className="font-bold text-sm text-foreground mt-0.5">{customer.customer_name}</div>
+              <div className="font-bold text-sm text-foreground mt-0.5">{customer.gujarati_name?.trim() || customer.customer_name}</div>
               <div className="text-muted-foreground mt-0.5">
                 {customer.address}, {customer.city}, {customer.state} - {customer.postal_code}
               </div>

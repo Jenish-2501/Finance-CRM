@@ -461,7 +461,7 @@ export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> =
               <span>{isReturn ? 'Returned From (Customer Site)' : 'Consignee (Dispatched To)'}</span>
               <span className="text-emerald-700 font-semibold">Customer Site</span>
             </div>
-            <div className="font-bold text-neutral-900 text-sm pt-1">{customer.customer_name}</div>
+            <div className="font-bold text-neutral-900 text-sm pt-1">{customer.gujarati_name?.trim() || customer.customer_name}</div>
             <p className="text-neutral-600 leading-relaxed">
               {customer.address}, {customer.city}, {customer.state} - {customer.postal_code}
             </p>

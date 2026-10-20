@@ -13,6 +13,58 @@ let dbPath: string | null = null;
 // data: dev.sqlite under the Vite dev server, app.sqlite in production.
 // A legacy application.db (pre-split installs) is adopted once by copying
 // it to the new name; the -shm sidecar is skipped (transient, rebuilt).
+//
+// App renames (AccuLedger -> Maruti) move Electron's userData folder, which
+// would orphan the previous install's database. When our database is absent,
+// adopt it once from a previous product folder (plus its backups), so the
+// rename upgrades in place with zero data loss.
+const LEGACY_USERDATA_NAMES = ['AccuLedger', 'react-example'];
+
+function copyIfPresent(src: string, dest: string): void {
+  try {
+    if (fs.existsSync(src) && !fs.existsSync(dest)) fs.copyFileSync(src, dest);
+  } catch {
+    // best-effort adoption — a failed copy simply means "nothing adopted"
+  }
+}
+
+function adoptPreviousProductData(userDataPath: string, dbDir: string): void {
+  const parent = path.dirname(userDataPath);
+  for (const legacyName of LEGACY_USERDATA_NAMES) {
+    if (path.basename(userDataPath) === legacyName) continue;
+    const legacyDbDir = path.join(parent, legacyName, 'database');
+    let adopted = false;
+    for (const f of ['app.sqlite', 'dev.sqlite', 'application.db']) {
+      const src = path.join(legacyDbDir, f);
+      if (!fs.existsSync(src)) continue;
+      const destName = f === 'application.db' ? 'app.sqlite' : f;
+      const dest = path.join(dbDir, destName);
+      if (fs.existsSync(dest)) return; // our own DB already exists — never overwrite
+      copyIfPresent(src, dest);
+      copyIfPresent(`${src}-wal`, `${dest}-wal`);
+      adopted = fs.existsSync(dest);
+      if (adopted) break;
+    }
+    if (adopted) {
+      // Carry the safety net too: manual + pre-migrate backups.
+      const srcBackups = path.join(parent, legacyName, 'backups');
+      const destBackups = path.join(userDataPath, 'backups');
+      try {
+        if (fs.existsSync(srcBackups)) {
+          fs.mkdirSync(destBackups, { recursive: true });
+          for (const f of fs.readdirSync(srcBackups)) {
+            if (f.endsWith('.sqlite')) copyIfPresent(path.join(srcBackups, f), path.join(destBackups, f));
+          }
+        }
+      } catch {
+        // backups are a safety net, not a startup blocker
+      }
+      logger.info('database.previous_product_adopted', { from: legacyName });
+      return;
+    }
+  }
+}
+
 function resolveDatabaseFile(userDataPath: string): string {
   const dbDir = path.join(userDataPath, 'database');
   fs.mkdirSync(dbDir, { recursive: true });
@@ -20,8 +72,9 @@ function resolveDatabaseFile(userDataPath: string): string {
   const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
   const target = path.join(dbDir, isDev ? 'dev.sqlite' : 'app.sqlite');
   if (!fs.existsSync(target)) {
+    adoptPreviousProductData(userDataPath, dbDir);
     const legacy = path.join(dbDir, 'application.db');
-    if (fs.existsSync(legacy)) {
+    if (!fs.existsSync(target) && fs.existsSync(legacy)) {
       fs.copyFileSync(legacy, target);
       const legacyWal = `${legacy}-wal`;
       if (fs.existsSync(legacyWal)) fs.copyFileSync(legacyWal, `${target}-wal`);

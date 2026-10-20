@@ -52,7 +52,7 @@ export interface Customer {
   id: string;
   customer_name: string;
   customer_number: string; // searchable short code, unique (e.g. C-1001)
-  gujarati_name?: string | null; // optional Gujarati nickname (master-data only; legal docs use customer_name)
+  gujarati_name?: string | null; // optional Gujarati nickname, printed under the legal name on invoices/challans/ledgers
   pan: string;
   gst_number: string;
   mobile: string;
@@ -212,6 +212,8 @@ export type InvoiceStatus = 'DRAFT' | 'FINALIZED' | 'CANCELLED';
 
 export interface InvoiceCustomerSnapshot {
   customer_name: string;
+  /** Frozen Gujarati nickname, printed under the legal name on invoices. */
+  gujarati_name?: string | null;
   pan: string;
   gst_number: string;
   email: string;

@@ -80,6 +80,36 @@ function sectionLabel(doc: jsPDF, text: string, y: number, margin: number = MARG
   return y + 5;
 }
 
+/**
+ * Ledger customer header line. The Gujarati nickname REPLACES the English
+ * name inline (same line, same size); without one it is byte-identical to
+ * sectionLabel(`Customer: …`).
+ */
+function sectionCustomerLine(
+  doc: jsPDF,
+  y: number,
+  name: string,
+  meta: string,
+  guImg: GujaratiInlineImage | null
+): number {
+  doc.setFont(MONO, 'bold');
+  doc.setFontSize(8);
+  doc.setTextColor(...MUTED);
+  if (!guImg) {
+    doc.text(`Customer: ${str(name).substring(0, 50)}  |  ${str(meta).substring(0, 60)}`.toUpperCase(), MARGIN, y);
+    return y + 5;
+  }
+  const label = 'CUSTOMER: ';
+  doc.text(label, MARGIN, y);
+  let cx = MARGIN + doc.getTextWidth(label);
+  const lineH = pdfLineHeight(8);
+  const lineTop = y - ((8 * 25.4) / 72);
+  doc.addImage(guImg.dataUrl, 'PNG', cx, lineTop + (lineH - guImg.h) / 2, guImg.w, guImg.h);
+  cx += guImg.w + 2;
+  doc.text(`  |  ${str(meta).substring(0, 60)}`.toUpperCase(), cx, y);
+  return y + 5;
+}
+
 // Bottom edge of the most recently drawn autoTable.
 function tableEndY(doc: jsPDF): number {
   return (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY;
@@ -123,6 +153,96 @@ export function drawWatermark(
   } catch {
     // A bad logo must never break a legal document.
   }
+}
+
+export interface GujaratiInlineImage {
+  dataUrl: string;
+  w: number;
+  h: number;
+}
+
+/**
+ * Gujarati customer name for downloaded PDFs, sized to REPLACE the English
+ * name inline (same place, same visual size — never an extra line).
+ * jsPDF's built-in fonts are WinAnsi-only, so the name is shaped by the
+ * browser engine (correct conjuncts/matras via the bundled Noto Sans
+ * Gujarati, or the OS fallback) onto an offscreen canvas, tightly trimmed
+ * to its ink bounding box, and scaled so its height equals the surrounding
+ * Latin cap height (fontSizePt). Returns null when empty/unavailable, in
+ * which case callers fall back to the English name.
+ */
+export function gujaratiInlineImage(
+  text: string | null | undefined,
+  fontSizePt: number,
+  maxWMm = 100
+): GujaratiInlineImage | null {
+  try {
+    const t = (text ?? '').trim();
+    if (!t || !(fontSizePt > 0)) return null;
+    if (typeof document === 'undefined') return null;
+    const canvas = document.createElement('canvas');
+    const probe = canvas.getContext('2d');
+    if (!probe) return null;
+    // Large render for a clean trim + crisp print.
+    const fontPx = 120;
+    const font = `${fontPx}px "Noto Sans Gujarati", sans-serif`;
+    probe.font = font;
+    const textW = probe.measureText(t).width;
+    if (!textW || !Number.isFinite(textW)) return null;
+    const pad = 20;
+    canvas.width = Math.ceil(textW + pad * 2);
+    canvas.height = Math.ceil(fontPx * 1.8);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.font = font;
+    ctx.fillStyle = '#171717';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(t, pad, canvas.height / 2);
+    // Tight trim to the ink bounding box (no floating whitespace, so the
+    // image sits exactly on the replaced text line).
+    const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    let minX = canvas.width;
+    let maxX = -1;
+    let minY = canvas.height;
+    let maxY = -1;
+    for (let yy = 0; yy < canvas.height; yy++) {
+      for (let xx = 0; xx < canvas.width; xx++) {
+        if (pixels[(yy * canvas.width + xx) * 4 + 3] > 8) {
+          if (xx < minX) minX = xx;
+          if (xx > maxX) maxX = xx;
+          if (yy < minY) minY = yy;
+          if (yy > maxY) maxY = yy;
+        }
+      }
+    }
+    if (maxX < minX || maxY < minY) return null;
+    const trim = document.createElement('canvas');
+    trim.width = maxX - minX + 1;
+    trim.height = maxY - minY + 1;
+    const tctx = trim.getContext('2d');
+    if (!tctx) return null;
+    tctx.drawImage(canvas, minX, minY, trim.width, trim.height, 0, 0, trim.width, trim.height);
+    let h = (fontSizePt * 25.4) / 72;
+    let w = (h * trim.width) / trim.height;
+    if (w > maxWMm) {
+      h = (h * maxWMm) / w;
+      w = maxWMm;
+    }
+    return { dataUrl: trim.toDataURL('image/png'), w, h };
+  } catch {
+    return null;
+  }
+}
+
+/** Placeholder first line that reserves exactly one text line inside an
+    autoTable cell (proven equal height to a real line). The Gujarati image
+    is drawn over it via didDrawCell, so the name sits precisely where the
+    English name would have been. */
+export const GU_NAME_PLACEHOLDER = ' ';
+
+/** Text line height (mm) autotable uses for a font size (factor 1.15). */
+export function pdfLineHeight(fontSizePt: number): number {
+  return ((fontSizePt * 25.4) / 72) * 1.15;
 }
 
 function businessHeader(
@@ -257,6 +377,9 @@ export interface InvoicePdfInput {
   /** Current business logo data URL (PNG/JPEG). Drawn as a centred watermark
       on every page when present; snapshots stay frozen otherwise. */
   logoDataUrl?: string;
+  /** Live Gujarati nickname fallback for invoices billed before it was
+      snapshotted; the frozen snapshot wins when present. */
+  customerGujaratiName?: string;
 }
 
 export function buildInvoicePdf(input: InvoicePdfInput): jsPDF {
@@ -301,18 +424,29 @@ export function buildInvoicePdf(input: InvoicePdfInput): jsPDF {
         : allocations
             .map((a) => `#${a.customer_inventory_movement_id}: ${a.allocated_quantity} units`)
             .join(', ');
+  // Gujarati nickname REPLACES the English name inline (same line, same
+  // size): the first cell line holds a same-height placeholder and the
+  // shaped image is drawn over it. Falls back to English when absent.
+  const invGu = (input.customerGujaratiName ?? cust.gujarati_name ?? '').trim();
+  const invGuImg = invGu ? gujaratiInlineImage(invGu, 7) : null;
   autoTable(doc, {
     startY: y,
     margin: { left: MARGIN, right: MARGIN },
     head: [['BILLED TO (CUSTOMER SNAPSHOT)', 'INVENTORY ALLOCATION AUDIT LINK']],
     body: [[
-      `${str(cust.customer_name)}\n${custAddr}\nGSTIN: ${str(cust.gst_number, 'N/A / Unregistered')}  |  PAN: ${str(cust.pan, 'N/A')}\nContact: ${str(cust.mobile, '-')} | ${str(cust.email, '-')}`,
+      `${invGuImg ? GU_NAME_PLACEHOLDER : str(cust.customer_name)}\n${custAddr}\nGSTIN: ${str(cust.gst_number, 'N/A / Unregistered')}  |  PAN: ${str(cust.pan, 'N/A')}\nContact: ${str(cust.mobile, '-')} | ${str(cust.email, '-')}`,
       `Explicitly allocated against customer inventory movements:\n${allocLines}`,
     ]],
     theme: 'grid',
-    styles: { font: SANS, fontSize: 7, textColor: INK, cellPadding: 1.5, lineColor: LINE, lineWidth: 0.25, valign: 'top' },
+    styles: { font: SANS, fontSize: 7, textColor: INK, cellPadding: 1.5, lineColor: LINE, lineWidth: 0.25 },
     headStyles: { fontStyle: 'bold', fontSize: 6.5, textColor: [255, 255, 255], fillColor: INK },
     columnStyles: { 0: { cellWidth: 112 }, 1: { cellWidth: 'auto' } },
+    didDrawCell: (d) => {
+      if (!invGuImg || d.section !== 'body' || d.row.index !== 0 || d.column.index !== 0) return;
+      const lineH = pdfLineHeight(7);
+      const top = d.cell.y + 1.5;
+      doc.addImage(invGuImg.dataUrl, 'PNG', d.cell.x + 1.5, top + (lineH - invGuImg.h) / 2, invGuImg.w, invGuImg.h);
+    },
   });
   y = tableEndY(doc) + 3;
 
@@ -547,17 +681,26 @@ export function buildChallanPdf(input: ChallanPdfInput): jsPDF {
   y += 7;
 
   // ---- Consignee: full-width ruled box (consignor already sits in the header) ----
+  // Gujarati nickname REPLACES the English name inline (same line, same size).
   const custContact = str(cust.mobile, '');
+  const challanGu = (cust.gujarati_name ?? '').trim();
+  const challanGuImg = challanGu ? gujaratiInlineImage(challanGu, 7.5, 85) : null;
   autoTable(doc, {
     startY: y,
     margin: { left: M, right: M },
     head: [[isReturn ? 'RETURNED FROM (CUSTOMER SITE)' : 'CONSIGNEE (DISPATCHED TO)']],
     body: [[
-      `${str(cust.customer_name)}\n${formatAddress(cust.address, cust.city, cust.state, cust.postal_code)}${custContact ? `\nContact: ${custContact}` : ''}`,
+      `${challanGuImg ? GU_NAME_PLACEHOLDER : str(cust.customer_name)}\n${formatAddress(cust.address, cust.city, cust.state, cust.postal_code)}${custContact ? `\nContact: ${custContact}` : ''}`,
     ]],
     theme: 'grid',
     styles: { font: SANS, fontSize: 7.5, textColor: INK, cellPadding: 2.5, lineColor: LINE, lineWidth: 0.25, valign: 'top' },
     headStyles: { fontStyle: 'bold', fontSize: 7, textColor: [255, 255, 255], fillColor: INK },
+    didDrawCell: (d) => {
+      if (!challanGuImg || d.section !== 'body' || d.row.index !== 0 || d.column.index !== 0) return;
+      const lineH = pdfLineHeight(7.5);
+      const top = d.cell.y + 2.5;
+      doc.addImage(challanGuImg.dataUrl, 'PNG', d.cell.x + 2.5, top + (lineH - challanGuImg.h) / 2, challanGuImg.w, challanGuImg.h);
+    },
   });
   y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 4;
 
@@ -663,6 +806,8 @@ export interface MovementLedgerPdfInput {
   /** Current business logo data URL (PNG/JPEG). Drawn as a centred watermark
       on every page when present. */
   logoDataUrl?: string;
+  /** Gujarati nickname of the ledger customer, printed under the header. */
+  customerGujaratiName?: string;
 }
 
 export function buildMovementLedgerPdf(input: MovementLedgerPdfInput): jsPDF {
@@ -682,7 +827,10 @@ export function buildMovementLedgerPdf(input: MovementLedgerPdfInput): jsPDF {
     ]
   }, { width: PAGE_W, margin: MARGIN, compact: true, top: 12 });
 
-  y = sectionLabel(doc, `Customer: ${str(input.customerName).substring(0, 50)}  |  ${str(input.customerMeta).substring(0, 60)}`, y);
+  // Gujarati nickname REPLACES the English name inline (same line, same size).
+  const ledgerGu = (input.customerGujaratiName ?? '').trim();
+  const ledgerGuImg = ledgerGu ? gujaratiInlineImage(ledgerGu, 8) : null;
+  y = sectionCustomerLine(doc, y, input.customerName, input.customerMeta, ledgerGuImg);
   doc.setFont(SANS, 'normal');
   doc.setFontSize(7.5);
   doc.setTextColor(...MUTED);

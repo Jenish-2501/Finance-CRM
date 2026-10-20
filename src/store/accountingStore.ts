@@ -1944,6 +1944,7 @@ export const useAccountingStore = create<AccountingState>()(
           grand_total: totals.grandTotal,
           customer_snapshot: {
             customer_name: customer.customer_name,
+            gujarati_name: customer.gujarati_name?.trim() || null,
             pan: customer.pan,
             gst_number: customer.gst_number,
             email: '',
