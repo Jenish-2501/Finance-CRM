@@ -303,6 +303,91 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     return ok ? { ok: true } : { ok: false, error: 'PRINT_FAILED' };
   });
 
+  // printing:printPdf prints the EXACT PDF bytes the preview shows and the
+  // Download button saves — no HTML re-render in between. The bytes go to a
+  // hidden plugins-enabled window whose Chromium PDF plugin renders them,
+  // then that window prints itself (silent to a chosen/default printer, or
+  // with the OS dialog). This is the single print path for invoices/challans.
+  safeHandler('printing:printPdf', async (payload: unknown) => {
+    if (!isRecord(payload)) throw new Error('VALIDATION_FAILED:payload must be an object');
+    const { pdfBase64, deviceName, copies, silent } = payload as {
+      pdfBase64?: unknown;
+      deviceName?: unknown;
+      copies?: unknown;
+      silent?: unknown;
+    };
+    if (typeof pdfBase64 !== 'string' || pdfBase64.length === 0 || pdfBase64.length > 50_000_000) {
+      throw new Error('VALIDATION_FAILED:pdfBase64 invalid');
+    }
+    if (deviceName !== undefined && (typeof deviceName !== 'string' || deviceName.length > 256)) {
+      throw new Error('VALIDATION_FAILED:deviceName invalid');
+    }
+    const nCopies = copies === undefined ? 1 : copies;
+    if (typeof nCopies !== 'number' || !Number.isInteger(nCopies) || nCopies < 1 || nCopies > 99) {
+      throw new Error('VALIDATION_FAILED:copies must be 1-99');
+    }
+    const win = getWindow();
+    if (!win) return { ok: false, error: 'NO_WINDOW' };
+    if (deviceName) {
+      try {
+        const printers = await win.webContents.getPrintersAsync();
+        if (!printers.some((p) => p.name === deviceName)) {
+          return { ok: false, error: 'PRINTER_NOT_FOUND' };
+        }
+      } catch {
+        logger.error('print.list_failed', {});
+        return { ok: false, error: 'PRINTER_LOOKUP_FAILED' };
+      }
+    }
+
+    // The PDF plugin needs a real file (data: URLs do not render in it).
+    const tempFile = path.join(
+      app.getPath('temp'),
+      `acculedger-print-${Date.now()}-${Math.floor(Math.random() * 1e6)}.pdf`
+    );
+    let printWin: BrowserWindow | null = null;
+    try {
+      fs.writeFileSync(tempFile, Buffer.from(pdfBase64, 'base64'));
+      printWin = new BrowserWindow({
+        show: false,
+        webPreferences: { plugins: true },
+      });
+      await printWin.loadFile(tempFile);
+      // Give the PDF plugin a beat to rasterize before printing.
+      await new Promise((r) => setTimeout(r, 300));
+      const ok = await new Promise<boolean>((resolve) => {
+        try {
+          printWin!.webContents.print(
+            {
+              silent: silent !== false,
+              deviceName: deviceName || undefined,
+              copies: nCopies,
+              printBackground: true,
+            },
+            (success, failureReason) => {
+              if (!success) logger.error('print.pdf_failed', { reason: String(failureReason) });
+              resolve(success);
+            }
+          );
+        } catch {
+          logger.error('print.pdf_failed', {});
+          resolve(false);
+        }
+      });
+      return ok ? { ok: true } : { ok: false, error: 'PRINT_FAILED' };
+    } catch {
+      logger.error('print.pdf_failed', { stage: 'prepare' });
+      return { ok: false, error: 'PRINT_FAILED' };
+    } finally {
+      printWin?.destroy();
+      try {
+        fs.rmSync(tempFile, { force: true });
+      } catch {
+        // temp cleanup failure is harmless
+      }
+    }
+  });
+
   // ---- File exports (dialog-gated, renderer never touches fs) ----
   safeHandler('files:saveCSV', async (payload: unknown) => {
     assertFilePayload(payload);

@@ -39,11 +39,20 @@ export type NavigationTab =
 interface SidebarProps {
   currentTab: NavigationTab;
   onSelectTab: (tab: NavigationTab) => void;
+  /** Role workspace: 'counter' keeps only operator tabs, 'super' everything. Defaults to 'super'. */
+  role?: 'super' | 'counter';
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab }) => {
+// Counter-staff workspace: challan entry (Customer Inventory), product
+// catalog and customer master data only — billing, invoices, payments,
+// reports and administration are hidden, not merely disabled.
+const COUNTER_ALLOWED_TABS: NavigationTab[] = ['customer-inventory', 'products', 'customers'];
+
+export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab, role = 'super' }) => {
   const { t } = useT();
   const { businessSettings } = useAccountingStore();
+  const allow = (tab: NavigationTab) =>
+    role !== 'counter' || COUNTER_ALLOWED_TABS.includes(tab);
   const navSections = [
     {
       title: t('nav.sections.core'),
@@ -105,11 +114,19 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab }) => 
             {businessSettings.gst_number}
           </div>
         </div>
+        {role === 'counter' && (
+          <span className="ml-auto shrink-0 text-[9px] font-mono font-bold tracking-wider text-muted-foreground bg-muted border border-border rounded px-1.5 py-0.5">
+            {t('shell.counterBadge')}
+          </span>
+        )}
       </div>
 
       {/* Nav items */}
       <nav aria-label={t('nav.primary')} className="flex-1 py-4 px-3 overflow-y-auto space-y-6">
-        {navSections.map((sec) => (
+        {navSections
+          .map((sec) => ({ ...sec, items: sec.items.filter((item) => allow(item.id)) }))
+          .filter((sec) => sec.items.length > 0)
+          .map((sec) => (
           <div key={sec.title}>
             <div className="text-[10px] font-mono tracking-wider font-semibold text-muted-foreground uppercase px-3 mb-1.5">
               {sec.title}

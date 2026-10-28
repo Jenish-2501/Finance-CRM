@@ -78,6 +78,7 @@ describe('v6 → v13 upgrade adoption', () => {
         { version: 11 }, { version: 12 }, { version: 13 }, { version: 14 }, { version: 15 },
         { version: 16 },
         { version: 17 },
+        { version: 18 },
       ]);
 
       const inv = db.prepare('SELECT invoice_number, fy FROM invoices WHERE id=?').get('inv-old') as {

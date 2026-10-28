@@ -19,6 +19,7 @@ import * as m0014 from './migrations/0014_language_overrides.js';
 import * as m0015 from './migrations/0015_remove_dispatch_logistics.js';
 import * as m0016 from './migrations/0016_customer_gujarati_name.js';
 import * as m0017 from './migrations/0017_business_logo.js';
+import * as m0018 from './migrations/0018_product_gujarati_name.js';
 
 interface Migration {
   version: number;
@@ -52,6 +53,7 @@ const MIGRATIONS: Migration[] = [
   { version: m0015.version, name: m0015.name, sql: m0015.sql, migrate: m0015.migrate },
   { version: m0016.version, name: m0016.name, sql: m0016.sql },
   { version: m0017.version, name: m0017.name, sql: m0017.sql },
+  { version: m0018.version, name: m0018.name, sql: m0018.sql },
 ];
 
 const MIGRATIONS_TABLE_SQL = `

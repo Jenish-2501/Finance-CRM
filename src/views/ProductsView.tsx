@@ -22,6 +22,7 @@ export const ProductsView: React.FC = () => {
     productUnits,
     productPrices,
     createProduct,
+    updateProduct,
     createProductPrice,
     getCurrentCompanyStock,
     getPieceWeightMapping,
@@ -39,6 +40,7 @@ export const ProductsView: React.FC = () => {
   // New product form state
   const [newProduct, setNewProduct] = useState({
     product_name: '',
+    gujarati_name: '',
     sku: '',
     description: '',
     primary_unit_id: 'uom-pcs',
@@ -46,6 +48,10 @@ export const ProductsView: React.FC = () => {
     grams_per_piece: ''
   });
   const [createError, setCreateError] = useState('');
+
+  // Gujarati name edit state for the selected (existing) product
+  const [guName, setGuName] = useState('');
+  const [guMsg, setGuMsg] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
 
   // Price adjustment form state
   const [newPriceForm, setNewPriceForm] = useState({
@@ -64,7 +70,11 @@ export const ProductsView: React.FC = () => {
   const allProducts = Object.values(products);
   const filteredProducts = allProducts.filter((p) => {
     const q = searchQuery.toLowerCase();
-    return p.product_name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q);
+    return (
+      p.product_name.toLowerCase().includes(q) ||
+      p.sku.toLowerCase().includes(q) ||
+      (p.gujarati_name ?? '').toLowerCase().includes(q)
+    );
   });
 
   const selectedProduct = selectedProductId ? products[selectedProductId] : null;
@@ -76,6 +86,7 @@ export const ProductsView: React.FC = () => {
   const handleOpenCreate = () => {
     setNewProduct({
       product_name: '',
+      gujarati_name: '',
       sku: `SKU-${Math.floor(1000 + Math.random() * 9000)}`,
       description: '',
       primary_unit_id: 'uom-pcs',
@@ -90,6 +101,10 @@ export const ProductsView: React.FC = () => {
     e.preventDefault();
     setCreateError('');
     if (!newProduct.product_name.trim() || !newProduct.sku.trim()) return;
+    if (newProduct.gujarati_name.trim().length > 200) {
+      setCreateError(t('products.errGuTooLong'));
+      return;
+    }
     const gramsRaw = newProduct.grams_per_piece.trim();
     if (gramsRaw !== '' && (!Number.isFinite(Number(gramsRaw)) || Number(gramsRaw) <= 0)) {
       setCreateError(t('products.errPieceInvalid'));
@@ -105,6 +120,7 @@ export const ProductsView: React.FC = () => {
     const created = createProduct(
       {
         product_name: newProduct.product_name.trim(),
+        gujarati_name: newProduct.gujarati_name.trim() || null,
         sku: newProduct.sku.trim().toUpperCase(),
         description: newProduct.description.trim(),
         primary_unit_id: newProduct.primary_unit_id,
@@ -184,6 +200,26 @@ export const ProductsView: React.FC = () => {
     else setPieceMsg(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProductId, productUnits]);
+
+  // Gujarati name editor follows the selected product; picking a different one
+  // resets the local edit state (same pattern as the piece-mapping field).
+  useEffect(() => {
+    setGuName(selectedProduct?.gujarati_name ?? '');
+    setGuMsg(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProductId]);
+
+  const handleSaveGuName = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedProductId) return;
+    const val = guName.trim();
+    if (val.length > 200) {
+      setGuMsg({ kind: 'error', text: t('products.errGuTooLong') });
+      return;
+    }
+    updateProduct(selectedProductId, { gujarati_name: val || null });
+    setGuMsg({ kind: 'success', text: t('products.msgGuSaved') });
+  };
 
   const handleSavePieceMapping = (e: React.FormEvent) => {
     e.preventDefault();
@@ -312,6 +348,11 @@ export const ProductsView: React.FC = () => {
                     <TD>
                       <div className="font-semibold group-hover:text-foreground">
                         {prod.product_name}
+                        {prod.gujarati_name?.trim() && (
+                          <span className="ml-1.5 text-[11px] font-normal text-muted-foreground">
+                            ({prod.gujarati_name.trim()})
+                          </span>
+                        )}
                       </div>
                       <div className="text-[11px] text-muted-foreground truncate max-w-sm">
                         {prod.description}
@@ -473,6 +514,32 @@ export const ProductsView: React.FC = () => {
                   {t('products.heldAcross', { count: customerHoldingBreakdown.length })}
                 </div>
               </div>
+            </div>
+
+            {/* Gujarati display name (editable for existing products) */}
+            <div className="border border-border rounded p-3.5 space-y-2.5 bg-muted/40">
+              <form onSubmit={handleSaveGuName} className="flex flex-col sm:flex-row sm:items-end gap-3">
+                <div className="sm:w-72 space-y-1">
+                  <Label>{t('products.fNameGu')}</Label>
+                  <Input
+                    type="text"
+                    value={guName}
+                    onChange={(e) => setGuName(e.target.value)}
+                    maxLength={200}
+                    placeholder={t('products.fNameGuPh')}
+                    className="w-full"
+                  />
+                  <p className="text-[10px] text-muted-foreground">{t('products.fNameGuHint')}</p>
+                </div>
+                <Button type="submit" variant="secondary" size="sm">
+                  {t('common.save')}
+                </Button>
+              </form>
+              {guMsg && (
+                <Alert tone={guMsg.kind === 'success' ? 'success' : 'destructive'}>
+                  <span className="text-xs">{guMsg.text}</span>
+                </Alert>
+              )}
             </div>
 
             {/* UOM Configurations */}
@@ -648,6 +715,19 @@ export const ProductsView: React.FC = () => {
                 className="w-full p-2 border border-input rounded focus:outline-none focus:ring-1 focus:ring-ring"
                 placeholder={t('products.fNamePh')}
               />
+            </div>
+
+            <div className="col-span-2">
+              <Label className="mb-1">{t('products.fNameGu')}</Label>
+              <Input
+                type="text"
+                value={newProduct.gujarati_name}
+                onChange={(e) => setNewProduct({ ...newProduct, gujarati_name: e.target.value })}
+                className="w-full"
+                placeholder={t('products.fNameGuPh')}
+                maxLength={200}
+              />
+              <p className="text-[10px] text-muted-foreground mt-0.5">{t('products.fNameGuHint')}</p>
             </div>
 
             <div>

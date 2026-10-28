@@ -1,8 +1,20 @@
 // @vitest-environment jsdom
-import { describe, it, expect, afterEach } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { render, cleanup } from '@testing-library/react';
 import { InvoicePrintView } from '../../src/components/invoice/InvoicePrintView';
 import { LanguageProvider } from '../../src/i18n';
+
+// The preview IS the PDF now: capture the exact jsPDF document the view hands
+// to PdfPreview and assert on its text — the same bytes that Download saves
+// and the printer receives. (jsdom has no createObjectURL, so the real viewer
+// would render nothing; the mock also keeps that safe.)
+const captured = vi.hoisted(() => ({ doc: null as unknown }));
+vi.mock('../../src/components/common/PdfPreview', () => ({
+  PdfPreview: ({ doc }: { doc: unknown }) => {
+    captured.doc = doc;
+    return null;
+  },
+}));
 
 import type { useAccountingStore as useAccountingStoreType } from '../../src/store/accountingStore';
 
@@ -12,6 +24,18 @@ let api: typeof useAccountingStoreType | undefined;
 async function loadStore() {
   if (!api) api = (await import('../../src/store/accountingStore')).useAccountingStore;
   return api;
+}
+
+function pdfText(): string {
+  const doc = captured.doc as { output: (type: 'arraybuffer') => ArrayBuffer } | null;
+  if (!doc) throw new Error('preview never received a jsPDF document');
+  // jsPDF switches the whole text run to UTF-16-style bytes when a run
+  // contains a non-WinAnsi character like "≈" (each ASCII char is then
+  // NUL-padded). Strip the NUL padding and unescape the PDF string literals
+  // (\( \) \\) to reconstruct the readable text.
+  return Buffer.from(doc.output('arraybuffer')).toString('latin1')
+    .replace(/\0/g, '')
+    .replace(/\\([()\\])/g, '$1');
 }
 
 afterEach(() => cleanup());
@@ -69,7 +93,10 @@ describe('invoice PCS reference in qty column', () => {
         />
       </LanguageProvider>
     );
-    expect(screen.getByText('(≈ 4 PCS)')).toBeDefined();
+    // "(≈ 4 PCS)" — the ≈ glyph switches the run to NUL-padded bytes, so the
+    // readable reconstruction anchors on the ASCII tail.
+    expect(pdfText()).toContain('4 PCS)');
+    expect(pdfText()).toContain('PCS');
   });
 
   it('never labels gram allocations as PCS', async () => {
@@ -114,7 +141,9 @@ describe('invoice PCS reference in qty column', () => {
         />
       </LanguageProvider>
     );
-    expect(screen.queryByText(/≈.*PCS/)).toBeNull();
+    const text = pdfText();
+    expect(text).not.toContain('≈');
+    expect(text).not.toContain('PCS');
   });
 
   it('never labels gram allocations behind a KG line as PCS', async () => {
@@ -166,6 +195,6 @@ describe('invoice PCS reference in qty column', () => {
       </LanguageProvider>
     );
     // 500 gram behind a KG line must not print as "(≈ 500 PCS)".
-    expect(screen.queryByText(/≈/)).toBeNull();
+    expect(pdfText()).not.toContain('≈');
   });
 });

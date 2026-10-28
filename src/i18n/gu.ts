@@ -22,7 +22,8 @@ export const gu: EnDictionary = {
     shellError: "શેલ એરર • બ્રિજ ઉપલબ્ધ નથી",
     browserPreview: "બ્રાઉઝર પ્રીવ્યૂ • ડેટાબેઝ નથી",
     storeLine1: "Zustand Relational Store",
-    storeLine2: "PostgreSQL Schema Contract"
+    storeLine2: "PostgreSQL Schema Contract",
+    counterBadge: "કાઉન્ટર"
   },
   nav: {
     primary: "મુખ્ય",
@@ -79,7 +80,7 @@ export const gu: EnDictionary = {
     showPasscode: "પાસકોડ બતાવો",
     hidePasscode: "પાસકોડ છુપાવો",
     placeholder: "પાસકોડ નાખો",
-    hint: "શરૂઆતનો ડિફોલ્ટ 1234 છે — સેટિંગ્સમાં જઈને બદલો.",
+    hint: "માલિકનો ડિફોલ્ટ 1234 • કાઉન્ટર કર્મચારી 2222 — માલિકનો પાસકોડ સેટિંગ્સમાં બદલો.",
     unlock: "એપ ખોલો",
     checking: "તપાસી રહ્યા છીએ…",
     errIncorrect: "પાસકોડ ખોટો છે. કૃપા કરીને ફરી પ્રયત્ન કરો.",
@@ -357,6 +358,11 @@ export const gu: EnDictionary = {
     createSubtitle: "કેટલોગની વસ્તુ તેના મુખ્ય એકમ સાથે નોંધે છે",
     fName: "પ્રોડક્ટનું નામ *",
     fNamePh: "દા.ત. કોલ્ડ રોલ્ડ સ્ટીલ રોડ 25mm",
+    fNameGu: "ગુજરાતીમાં નામ",
+    fNameGuPh: "દા.ત. કોલ્ડ રોલ્ડ સ્ટીલ રોડ",
+    fNameGuHint: "વૈકલ્પિક — ઝડપી ઓળખ માટે પ્રોડક્ટ કેટલોગમાં અંગ્રેજી નામની સાથે બતાવાશે.",
+    errGuTooLong: "ગુજરાતી પ્રોડક્ટ નામ 200 અક્ષરોથી વધુ ન હોવું જોઈએ.",
+    msgGuSaved: "ગુજરાતી પ્રોડક્ટ નામ સાચવાયું.",
     fSku: "SKU (સ્ટોક ઓળખ કોડ) *",
     fDesc: "વિગત",
     fDescPh: "સ્પેસિફિકેશન અને ગ્રેડની વિગત",

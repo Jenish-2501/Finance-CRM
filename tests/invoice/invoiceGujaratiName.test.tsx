@@ -1,9 +1,33 @@
 // @vitest-environment jsdom
-import { describe, it, expect, afterEach } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { render, cleanup } from '@testing-library/react';
 import { InvoicePrintView } from '../../src/components/invoice/InvoicePrintView';
 import { buildInvoicePdf, gujaratiInlineImage } from '../../src/utils/pdfDocuments';
 import { LanguageProvider } from '../../src/i18n';
+
+// The preview IS the PDF now: capture the exact jsPDF document the view hands
+// to PdfPreview (jsdom has no createObjectURL, so the real viewer would render
+// nothing; the mock also keeps that safe).
+const captured = vi.hoisted(() => ({ doc: null as unknown }));
+vi.mock('../../src/components/common/PdfPreview', () => ({
+  PdfPreview: ({ doc }: { doc: unknown }) => {
+    captured.doc = doc;
+    return null;
+  },
+}));
+
+// And spy on the builder inputs to prove the frozen nickname reaches the PDF.
+const pdfSpy = vi.hoisted(() => ({ lastInvoiceInput: null as Record<string, unknown> | null }));
+vi.mock('../../src/utils/pdfDocuments', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/utils/pdfDocuments')>();
+  return {
+    ...actual,
+    buildInvoicePdf: (input: Parameters<typeof actual.buildInvoicePdf>[0]) => {
+      pdfSpy.lastInvoiceInput = input as unknown as Record<string, unknown>;
+      return actual.buildInvoicePdf(input);
+    },
+  };
+});
 
 import type { useAccountingStore as useAccountingStoreType } from '../../src/store/accountingStore';
 
@@ -59,7 +83,7 @@ describe('Gujarati customer name on invoices', () => {
     expect(s2.invoices[inv.invoiceId!].customer_snapshot.gujarati_name).toBe(GU);
   });
 
-  it('replaces the English name with the nickname in the printable preview', async () => {
+  it('hands the frozen nickname to the PDF document (the printable preview)', async () => {
     const s = (await loadStore()).getState();
     const invoice = Object.values(s.invoices).find(
       (i) => i.customer_snapshot.gujarati_name === GU
@@ -71,9 +95,16 @@ describe('Gujarati customer name on invoices', () => {
         <InvoicePrintView invoice={invoice} items={items} payments={[]} allocations={allocs} />
       </LanguageProvider>
     );
-    expect(screen.getByText(GU)).toBeTruthy();
-    // replaced in place: the English name appears nowhere on the document
-    expect(screen.queryByText('Shree Traders')).toBeNull();
+    // The view built a document for the preview…
+    expect(captured.doc).not.toBeNull();
+    // …and passed the frozen Gujarati nickname into the builder.
+    expect(pdfSpy.lastInvoiceInput?.customerGujaratiName).toBe(GU);
+    // jsdom has no canvas, so gujaratiInlineImage falls back to the English
+    // name inside the PDF text (verified separately below); in the real
+    // Electron shell the canvas path renders the Gujarati glyphs.
+    const doc = captured.doc as { output: (type: 'arraybuffer') => ArrayBuffer };
+    const text = Buffer.from(doc.output('arraybuffer')).toString('latin1');
+    expect(text).toContain('Shree Traders');
   });
 
   it('gujaratiInlineImage falls back safely without a canvas', () => {

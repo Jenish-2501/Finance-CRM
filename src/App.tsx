@@ -25,15 +25,25 @@ import { LoginView } from './views/LoginView';
 
 const AUTH_SESSION_KEY = 'acculedger-auth';
 
+// Counter-staff workspace tabs: challan entry (Customer Inventory), product
+// catalog and customer master data. Must mirror Sidebar's COUNTER_ALLOWED_TABS.
+const COUNTER_ALLOWED_TABS: NavigationTab[] = ['customer-inventory', 'products', 'customers'];
+
 export default function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+  const [authRole, setAuthRole] = useState<'super' | 'counter' | null>(() => {
     try {
-      return sessionStorage.getItem(AUTH_SESSION_KEY) === 'true';
+      // Legacy sessions stored the bare flag 'true' — treat as super.
+      const v = sessionStorage.getItem(AUTH_SESSION_KEY);
+      if (v === 'super' || v === 'counter') return v;
+      if (v === 'true') return 'super';
     } catch {
-      return false;
+      // sessionStorage unavailable (e.g. tests) — in-memory only
     }
+    return null;
   });
-  const [currentTab, setCurrentTab] = useState<NavigationTab>('dashboard');
+  const [currentTab, setCurrentTab] = useState<NavigationTab>(
+    () => (authRole === 'counter' ? 'customer-inventory' : 'dashboard')
+  );
   const [selectedCustomerIdForBilling, setSelectedCustomerIdForBilling] = useState<string>('cust-1');
   const [selectedInvoiceIdForPreview, setSelectedInvoiceIdForPreview] = useState<string | null>(null);
   const [selectedInvoiceIdForPayment, setSelectedInvoiceIdForPayment] = useState<string | null>(null);
@@ -47,13 +57,18 @@ export default function App() {
     cancelInvoice
   } = useAccountingStore();
 
-  const handleLogin = () => {
+  // Defensive default: any caller that still passes no role (legacy bundles,
+  // stale HMR module graphs) unlocks the full app — only an explicit
+  // 'counter' from the verified passcode gets the restricted workspace.
+  const handleLogin = (role?: 'super' | 'counter') => {
+    const effectiveRole = role === 'counter' ? 'counter' : 'super';
     try {
-      sessionStorage.setItem(AUTH_SESSION_KEY, 'true');
+      sessionStorage.setItem(AUTH_SESSION_KEY, effectiveRole);
     } catch {
       // sessionStorage unavailable (e.g. tests) — fall back to in-memory auth
     }
-    setIsAuthenticated(true);
+    setAuthRole(effectiveRole);
+    setCurrentTab(effectiveRole === 'counter' ? 'customer-inventory' : 'dashboard');
   };
 
   const handleLogout = () => {
@@ -62,24 +77,32 @@ export default function App() {
     } catch {
       // ignore
     }
-    setIsAuthenticated(false);
+    setAuthRole(null);
     setCurrentTab('dashboard');
+  };
+
+  // Counter role sees only 3 tabs: navigation into anything else is a no-op,
+  // and cross-view buttons leading to billing/invoices are simply not passed
+  // down, so this guards any direct navigation calls too.
+  const navigateTab = (tab: NavigationTab) => {
+    if (authRole === 'counter' && !COUNTER_ALLOWED_TABS.includes(tab)) return;
+    setCurrentTab(tab);
   };
 
   // Navigation handlers
   const handleOpenBillingForCustomer = (customerId: string) => {
     setSelectedCustomerIdForBilling(customerId);
-    setCurrentTab('billing');
+    navigateTab('billing');
   };
 
   const handleInvoiceCreated = (invoiceId: string) => {
     setSelectedInvoiceIdForPreview(invoiceId);
-    setCurrentTab('invoices');
+    navigateTab('invoices');
   };
 
   const handleOpenPaymentModal = (invoiceId: string) => {
     setSelectedInvoiceIdForPayment(invoiceId);
-    setCurrentTab('payments');
+    navigateTab('payments');
   };
 
   const handleOpenInvoicePreview = (invoiceId: string) => {
@@ -98,7 +121,7 @@ export default function App() {
     ? Object.values(invoicePayments).filter((p) => p.invoice_id === selectedInvoiceIdForPreview)
     : [];
 
-  if (!isAuthenticated) {
+  if (!authRole) {
     return (
       <ThemeProvider>
         <LanguageProvider>
@@ -108,72 +131,83 @@ export default function App() {
     );
   }
 
+  // Restricted landing: counter role never renders disallowed views even if
+  // state somehow carries a stray tab across sessions.
+  const activeTab =
+    authRole === 'counter' && !COUNTER_ALLOWED_TABS.includes(currentTab)
+      ? 'customer-inventory'
+      : currentTab;
+
+  // In counter mode the billing/invoice cross-links are withheld, so those
+  // actions disappear from the allowed views' UI.
+  const passCrossNav = authRole !== 'counter';
+
   return (
     <ThemeProvider>
       <LanguageProvider>
-    <AppShell sidebar={<Sidebar currentTab={currentTab} onSelectTab={(tab) => setCurrentTab(tab)} />} header={<Header onLogout={handleLogout} />}>
-            {currentTab === 'dashboard' && (
+    <AppShell sidebar={<Sidebar currentTab={activeTab} role={authRole} onSelectTab={(tab) => navigateTab(tab)} />} header={<Header onLogout={handleLogout} />}>
+            {activeTab === 'dashboard' && (
               <DashboardView
-                onNavigate={(tab) => setCurrentTab(tab as NavigationTab)}
+                onNavigate={(tab) => navigateTab(tab as NavigationTab)}
                 onOpenInvoice={handleOpenInvoicePreview}
               />
             )}
 
-            {currentTab === 'customers' && (
+            {activeTab === 'customers' && (
               <CustomersView
-                onSelectCustomerForBilling={handleOpenBillingForCustomer}
-                onOpenInvoice={handleOpenInvoicePreview}
+                onSelectCustomerForBilling={passCrossNav ? handleOpenBillingForCustomer : undefined}
+                onOpenInvoice={passCrossNav ? handleOpenInvoicePreview : undefined}
               />
             )}
 
-            {currentTab === 'products' && <ProductsView />}
+            {activeTab === 'products' && <ProductsView />}
 
-            {currentTab === 'company-inventory' && <CompanyInventoryView />}
+            {activeTab === 'company-inventory' && <CompanyInventoryView />}
 
-            {currentTab === 'customer-inventory' && (
-              <CustomerInventoryView onOpenBillingForCustomer={handleOpenBillingForCustomer} />
+            {activeTab === 'customer-inventory' && (
+              <CustomerInventoryView onOpenBillingForCustomer={passCrossNav ? handleOpenBillingForCustomer : undefined} />
             )}
 
-            {currentTab === 'billing' && (
+            {activeTab === 'billing' && (
               <BillingView
                 initialCustomerId={selectedCustomerIdForBilling}
                 onInvoiceCreated={handleInvoiceCreated}
               />
             )}
 
-            {currentTab === 'invoices' && (
+            {activeTab === 'invoices' && (
               <InvoicesView
                 selectedInvoiceId={selectedInvoiceIdForPreview}
                 onOpenPaymentModal={handleOpenPaymentModal}
-                onNavigateToBilling={() => setCurrentTab('billing')}
+                onNavigateToBilling={() => navigateTab('billing')}
               />
             )}
 
-            {currentTab === 'payments' && (
+            {activeTab === 'payments' && (
               <PaymentsView
                 initialInvoiceId={selectedInvoiceIdForPayment}
                 onOpenInvoice={handleOpenInvoicePreview}
               />
             )}
 
-            {currentTab === 'ledger' && (
+            {activeTab === 'ledger' && (
               <CustomerLedgerView
                 initialCustomerId={selectedCustomerIdForBilling}
                 onOpenInvoice={handleOpenInvoicePreview}
               />
             )}
 
-            {currentTab === 'reports' && <ReportsView />}
+            {activeTab === 'reports' && <ReportsView />}
 
-            {currentTab === 'settings' && <SettingsView />}
+            {activeTab === 'settings' && <SettingsView />}
 
-            {currentTab === 'language-settings' && <LanguageSettingsView />}
+            {activeTab === 'language-settings' && <LanguageSettingsView />}
 
-            {currentTab === 'activity' && <AuditActivityView />}
+            {activeTab === 'activity' && <AuditActivityView />}
 
-            {currentTab === 'pricing' && <CustomerPricingView />}
+            {activeTab === 'pricing' && <CustomerPricingView />}
 
-            {currentTab === 'app-settings' && <AppSettingsView />}
+            {activeTab === 'app-settings' && <AppSettingsView />}
     </AppShell>
 
       {/* Global Invoice Preview Modal */}

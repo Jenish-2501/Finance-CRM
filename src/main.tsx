@@ -27,6 +27,7 @@ declare global {
         verify: (passcode: string) => Promise<{
           ok: boolean;
           error?: 'INVALID' | 'INCORRECT' | 'INCORRECT_CURRENT' | 'LOCKED';
+          role?: 'super' | 'counter';
         }>;
         change: (
           current: string,
@@ -41,6 +42,7 @@ declare global {
         login: (passcode: string) => Promise<{
           ok: boolean;
           error?: 'INVALID' | 'INCORRECT' | 'INCORRECT_CURRENT' | 'LOCKED';
+          role?: 'super' | 'counter';
         }>;
         changePasscode: (
           current: string,
@@ -160,6 +162,10 @@ declare global {
       };
       printing: {
         printPage: (opts: { deviceName?: string; copies?: number; silent?: boolean }) => Promise<{
+          ok: boolean;
+          error?: string;
+        }>;
+        printPdf: (opts: { pdfBase64: string; deviceName?: string; copies?: number; silent?: boolean }) => Promise<{
           ok: boolean;
           error?: string;
         }>;

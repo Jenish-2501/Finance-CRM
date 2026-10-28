@@ -96,7 +96,7 @@ theme:
   source: "src/index.css (@import tailwindcss + @theme inline)"
   modes: ["light", "dark (.dark class via ThemeProvider, persisted to localStorage)"]
   primitives: "src/components/ui (Button, Card, PageHeader, KpiCard, Input, Table, Badge, Alert, Tabs, Toolbar, AppShell, ThemeToggle)"
-  print-frozen: "InvoicePrintView / DeliveryChallanPrintView / CustomerLedgerView .print-container + utils/pdfDocuments.ts stay black-on-white"
+  print-frozen: "CustomerLedgerView .print-container + utils/pdfDocuments.ts stay black-on-white; InvoicePrintView / DeliveryChallanPrintView preview the jsPDF document itself via common/PdfPreview (iframe), so the PDF is the single source of truth"
 ---
 
 # Design System: AccuLedger

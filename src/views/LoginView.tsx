@@ -5,12 +5,14 @@ import { useAccountingStore } from '../store/accountingStore';
 import { useT, type TKey } from '../i18n';
 
 interface LoginViewProps {
-  onLogin: () => void;
+  /** Role carried from the verified passcode: 'super' (owner) or 'counter'. */
+  onLogin: (role: 'super' | 'counter') => void;
 }
 
 // Web-dev fallback only (no Electron main process, hence no database).
 // The desktop app ALWAYS verifies against the scrypt hash in SQLite.
 const DEV_FALLBACK_PASSCODE = '1234';
+const DEV_FALLBACK_COUNTER_PASSCODE = '2222';
 
 const ERROR_KEYS: Record<string, TKey> = {
   INCORRECT: 'login.errIncorrect',
@@ -31,6 +33,9 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLogin }) => {
   const errText = (code?: string): string =>
     t(ERROR_KEYS[code ?? 'INCORRECT'] ?? 'login.errIncorrect');
 
+  const roleOf = (code: string): 'super' | 'counter' =>
+    code === DEV_FALLBACK_COUNTER_PASSCODE ? 'counter' : 'super';
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (checking || passcode.length === 0) return;
@@ -42,21 +47,21 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLogin }) => {
       if (bridge) {
         const result = await bridge.verify(passcode);
         if (result.ok) {
-          onLogin();
+          onLogin(result.role === 'counter' ? 'counter' : 'super');
         } else {
           setError(errText(result.error));
         }
       } else if (legacy) {
         const result = await legacy.login(passcode);
         if (result.ok) {
-          onLogin();
+          onLogin(result.role === 'counter' ? 'counter' : 'super');
         } else {
           setError(errText(result.error));
         }
       } else {
         // Browser dev mode without the desktop shell.
-        if (passcode === DEV_FALLBACK_PASSCODE) {
-          onLogin();
+        if (passcode === DEV_FALLBACK_PASSCODE || passcode === DEV_FALLBACK_COUNTER_PASSCODE) {
+          onLogin(roleOf(passcode));
         } else {
           setError(t('login.errIncorrect'));
         }

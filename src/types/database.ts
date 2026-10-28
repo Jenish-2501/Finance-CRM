@@ -75,6 +75,7 @@ export interface Customer {
 export interface Product {
   id: string;
   product_name: string;
+  gujarati_name?: string | null; // optional Gujarati display name, shown alongside the English name in the catalog
   sku: string;
   description: string;
   image?: string;

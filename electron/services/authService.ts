@@ -11,6 +11,14 @@ import { logger } from '../utils/logger.js';
 const ROW_ID = 'local';
 const DEFAULT_PASSCODE = '1234';
 
+// Counter-staff role: a second credential row in the same table, seeded to
+// '2222'. Logging in with it opens a restricted workspace (challan entry,
+// product catalog, customer master data only) — the sidebar and cross-links
+// are filtered in the renderer; the database layer stays identical, since
+// this is a single-machine offline app.
+const COUNTER_ROW_ID = 'counter';
+const DEFAULT_COUNTER_PASSCODE = '2222';
+
 const SCRYPT_N = 16384;
 const SCRYPT_R = 8;
 const SCRYPT_P = 1;
@@ -27,9 +35,14 @@ let failureStamps: number[] = [];
 
 export type AuthError = 'INVALID' | 'INCORRECT' | 'INCORRECT_CURRENT' | 'LOCKED';
 
+/** Which workspace a successful passcode unlocks. */
+export type AuthRole = 'super' | 'counter';
+
 export interface AuthResult {
   ok: boolean;
   error?: AuthError;
+  /** Present on success — tells the renderer which role to launch. */
+  role?: AuthRole;
 }
 
 function hashPasscode(passcode: string): string {
@@ -58,17 +71,17 @@ function verifyHash(passcode: string, stored: string): boolean {
   return crypto.timingSafeEqual(actual, expected);
 }
 
-function readHash(): string | null {
+function readHash(rowId = ROW_ID): string | null {
   const db = getDrizzle();
-  const rows = db.select().from(authSettings).where(eq(authSettings.id, ROW_ID)).all();
+  const rows = db.select().from(authSettings).where(eq(authSettings.id, rowId)).all();
   return rows.length > 0 ? rows[0].passwordHash : null;
 }
 
-function writeHash(hash: string): void {
+function writeHash(hash: string, rowId = ROW_ID): void {
   const db = getDrizzle();
   const now = new Date().toISOString();
   db.insert(authSettings)
-    .values({ id: ROW_ID, passwordHash: hash, updatedAt: now })
+    .values({ id: rowId, passwordHash: hash, updatedAt: now })
     .onConflictDoUpdate({
       target: authSettings.id,
       set: { passwordHash: hash, updatedAt: now },
@@ -76,11 +89,15 @@ function writeHash(hash: string): void {
     .run();
 }
 
-/** Idempotent first-launch seed. Only creates the row when missing. */
+/** Idempotent first-launch seed. Creates each credential row only when missing. */
 export function ensureDefaultCredentials(): void {
-  if (readHash() === null) {
-    writeHash(hashPasscode(DEFAULT_PASSCODE));
+  if (readHash(ROW_ID) === null) {
+    writeHash(hashPasscode(DEFAULT_PASSCODE), ROW_ID);
     logger.info('auth.default_seeded', {});
+  }
+  if (readHash(COUNTER_ROW_ID) === null) {
+    writeHash(hashPasscode(DEFAULT_COUNTER_PASSCODE), COUNTER_ROW_ID);
+    logger.info('auth.counter_seeded', {});
   }
 }
 
@@ -111,10 +128,19 @@ export function verifyPasscode(passcode: unknown): AuthResult {
   if (!isValidPasscodeFormat(passcode)) return { ok: false, error: 'INVALID' };
   if (isLocked()) return { ok: false, error: 'LOCKED' };
   ensureDefaultCredentials();
-  const stored = readHash();
-  if (stored && verifyHash(passcode, stored)) {
+  const value = passcode as string;
+  const stored = readHash(ROW_ID);
+  if (stored && verifyHash(value, stored)) {
     clearFailures();
-    return { ok: true };
+    return { ok: true, role: 'super' };
+  }
+  // Counter-staff credential: limited workspace (challans/products/customers).
+  // Checked after the owner passcode, so the two can never collide on one
+  // passcode — the owner credential always wins.
+  const counterStored = readHash(COUNTER_ROW_ID);
+  if (counterStored && verifyHash(value, counterStored)) {
+    clearFailures();
+    return { ok: true, role: 'counter' };
   }
   recordFailure();
   return { ok: false, error: 'INCORRECT' };

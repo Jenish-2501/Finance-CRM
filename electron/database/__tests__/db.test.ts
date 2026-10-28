@@ -22,7 +22,7 @@ const now = () => new Date().toISOString();
   initDatabase(dir);
   assert.ok(fs.existsSync(path.join(dir, 'database', 'app.sqlite')), 'database file created');
   const applied = getSqlite().prepare('SELECT version FROM _migrations ORDER BY version').all();
-  assert.deepEqual(applied, [{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 }, { version: 14 }, { version: 15 }, { version: 16 }, { version: 17 }]);
+  assert.deepEqual(applied, [{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 }, { version: 14 }, { version: 15 }, { version: 16 }, { version: 17 }, { version: 18 }]);
   const health = checkDatabaseHealth();
   assert.equal(health.connected, true);
   assert.equal(health.migrationStatus, 'OK');
@@ -35,7 +35,7 @@ const now = () => new Date().toISOString();
   initDatabase(dir);
   const health2 = checkDatabaseHealth();
   assert.equal(health2.migrationStatus, 'OK');
-  assert.deepEqual(health2.appliedMigrations, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]);
+  assert.deepEqual(health2.appliedMigrations, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]);
   closeDatabase();
 }
 
@@ -160,10 +160,10 @@ const now = () => new Date().toISOString();
 
   // Migrations v2+v3 applied on fresh install
   const applied = getSqlite().prepare('SELECT version FROM _migrations ORDER BY version').all();
-  assert.deepEqual(applied, [{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 }, { version: 14 }, { version: 15 }, { version: 16 }, { version: 17 }]);
+  assert.deepEqual(applied, [{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 }, { version: 14 }, { version: 15 }, { version: 16 }, { version: 17 }, { version: 18 }]);
 
   // Default 1234 works; only a hash is stored, never plaintext
-  assert.deepEqual(verifyPasscode('1234'), { ok: true });
+  assert.deepEqual(verifyPasscode('1234'), { ok: true, role: 'super' });
   assert.deepEqual(verifyPasscode('0000'), { ok: false, error: 'INCORRECT' });
   const row = getSqlite().prepare('SELECT password_hash FROM auth_settings WHERE id = ?').get('local') as {
     password_hash: string;
@@ -171,9 +171,17 @@ const now = () => new Date().toISOString();
   assert.ok(row.password_hash.startsWith('scrypt$'), 'salted scrypt hash stored');
   assert.ok(!row.password_hash.includes('1234'), 'no plaintext in database');
 
+  // Counter-staff credential seeded to 2222, hashed too, resolves as counter role
+  const counterRow = getSqlite().prepare('SELECT password_hash FROM auth_settings WHERE id = ?').get('counter') as {
+    password_hash: string;
+  };
+  assert.ok(counterRow.password_hash.startsWith('scrypt$'), 'counter hash stored');
+  assert.ok(!counterRow.password_hash.includes('2222'), 'no counter plaintext in database');
+  assert.deepEqual(verifyPasscode('2222'), { ok: true, role: 'counter' });
+
   // Change passcode: new works, old stops
   assert.deepEqual(changePasscode('1234', '5678'), { ok: true });
-  assert.deepEqual(verifyPasscode('5678'), { ok: true });
+  assert.deepEqual(verifyPasscode('5678'), { ok: true, role: 'super' });
   assert.deepEqual(verifyPasscode('1234'), { ok: false, error: 'INCORRECT' });
 
   // Wrong current rejected; malformed rejected
@@ -185,14 +193,15 @@ const now = () => new Date().toISOString();
   for (let i = 0; i < 5; i++) verifyPasscode('nope-wrong');
   assert.deepEqual(verifyPasscode('5678'), { ok: false, error: 'LOCKED' });
   resetAuthThrottle();
-  assert.deepEqual(verifyPasscode('5678'), { ok: true });
+  assert.deepEqual(verifyPasscode('5678'), { ok: true, role: 'super' });
 
   closeDatabase();
 
   // Restart: credential survives reopen
   initDatabase(dir);
   const { verifyPasscode: verifyAgain } = await import('../../services/authService.js');
-  assert.deepEqual(verifyAgain('5678'), { ok: true });
+  assert.deepEqual(verifyAgain('5678'), { ok: true, role: 'super' });
+  assert.deepEqual(verifyAgain('2222'), { ok: true, role: 'counter' });
   closeDatabase();
 }
 

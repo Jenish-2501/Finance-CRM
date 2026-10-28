@@ -14,6 +14,8 @@ export interface DatabaseHealth {
 export interface AuthResult {
   ok: boolean;
   error?: 'INVALID' | 'INCORRECT' | 'INCORRECT_CURRENT' | 'LOCKED';
+  /** Present on success — 'super' unlocks the full app, 'counter' the restricted workspace. */
+  role?: 'super' | 'counter';
 }
 
 export interface Capabilities {
@@ -176,6 +178,12 @@ const api = {
       ok: boolean;
       error?: string;
     }> => ipcRenderer.invoke('printing:printPage', opts),
+    // Prints the exact PDF bytes the preview shows (hidden plugins-enabled
+    // window). deviceName omitted = default printer; silent:false = OS dialog.
+    printPdf: (opts: { pdfBase64: string; deviceName?: string; copies?: number; silent?: boolean }): Promise<{
+      ok: boolean;
+      error?: string;
+    }> => ipcRenderer.invoke('printing:printPdf', opts),
   },
 };
 

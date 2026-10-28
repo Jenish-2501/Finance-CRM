@@ -102,7 +102,11 @@ Dependencies: M01–M06, M16 (file export). Depended on by: M08 (shared totals).
 
 ### M08 pdf-export — CRITICAL (numbers must match screen/DB exactly)
 Files: `src/utils/pdfDocuments.ts` (buildInvoicePdf, buildChallanPdf, docToBase64, input interfaces),
-print views (`InvoicePrintView`, `DeliveryChallanPrintView` — `window.print` parity)
+`src/components/common/PdfPreview.tsx`, print views (`InvoicePrintView`, `DeliveryChallanPrintView`)
+PDF parity: the print views build ONE memoized jsPDF document; the on-screen preview embeds it via
+`PdfPreview` (`doc.output('bloburl')` iframe) and print sends those exact bytes through
+`printing:printPdf` (hidden plugins-enabled window renders the PDF, then prints — silent to a chosen
+printer or with the OS dialog). Browser fallback: `window.print()`. No HTML document replica remains.
 Inputs: invoice+items+payments+allocations / challan movement → jsPDF document → base64 → `files:savePDFBytes`.
 Challan is a compact A6 grid (ruled header, full-width consignee box, bordered items grid
 with Weight column, fixed footer); header carries no GSTIN/PAN; layout locked by `tests/challan-pdf/`.
@@ -169,10 +173,12 @@ Files: `electron/services/backupService.ts` (VACUUM INTO + retention), `electron
 (getDatabaseStructure — PRAGMA introspection, no row data), files:saveCSV/savePDFBytes handlers,
 `src/views/DatabaseStructureView.tsx`
 Printing (added later, same module): `printers:list` (OS printer list via `getPrintersAsync`) +
-`printing:printPage` (silent direct print with printer-name verification + copies 1–99, or OS dialog;
-envelope results) in `electron/ipc/handlers.ts` + `preload.ts`; picker UI in
-`DeliveryChallanPrintView` (printer dropdown, remembered choice, copies, direct/system paths).
-Print output reuses the existing `@media print` CSS, so silent prints match the dialog path exactly.
+`printing:printPage` (legacy whole-page print) and `printing:printPdf` (prints the exact PDF bytes
+the preview shows — writes a temp file, loads it in a hidden plugins-enabled `BrowserWindow`, then
+`webContents.print`: silent to a chosen printer with copies 1–99, or OS dialog; envelope results)
+in `electron/ipc/handlers.ts` + `preload.ts`; picker UI in `DeliveryChallanPrintView`
+(printer dropdown, remembered choice, copies, direct/system paths) and `InvoicePrintView`.
+Document print output is now byte-identical to the on-screen preview and the downloaded file.
 Backup download UI + restore-with-override UI: App Settings tab (`src/views/AppSettingsView.tsx`,
 tests in `tests/app-settings/`) driving `maintenance:exportBackup` — VACUUM snapshot + owner-chosen
 save location for periodic full (data + structure) backups — and `maintenance:restoreBackup`
