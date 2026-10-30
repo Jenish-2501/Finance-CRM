@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAccountingStore } from '../store/accountingStore';
 import { PaymentMethod } from '../types/database';
-import { formatINR } from '../utils/calculations';
+import { formatINR, roundCurrency, kolkataCalendarDay } from '../utils/calculations';
 import {
   Plus,
   Search,
@@ -27,7 +27,8 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
     invoices,
     createInvoicePayment,
     cancelInvoicePayment,
-    getInvoiceOutstanding
+    getInvoiceOutstanding,
+    getCustomerReturnCredit
   } = useAccountingStore();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -38,9 +39,13 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
   const [formInvoiceId, setFormInvoiceId] = useState<string>(initialInvoiceId || '');
   const [formAmount, setFormAmount] = useState<number>(0);
   const [formMethod, setFormMethod] = useState<PaymentMethod>('BANK_TRANSFER');
-  const [formDate, setFormDate] = useState(new Date().toISOString().split('T')[0]);
+  const [formDate, setFormDate] = useState(kolkataCalendarDay(new Date()));
   const [formReference, setFormReference] = useState('');
   const [formNotes, setFormNotes] = useState('');
+  // Return credit auto-used inside the payment modal: prefilled with
+  // min(customer's unspent credit, outstanding) when the invoice changes;
+  // cash auto-covers the remainder while the cash field is untouched.
+  const [formUseCredit, setFormUseCredit] = useState(0);
 
   const finalizedInvoicesWithOutstanding = Object.values(invoices).filter((i) => {
     if (i.status !== 'FINALIZED') return false;
@@ -48,13 +53,44 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
     return outstanding > 0;
   });
 
-  // When selected invoice changes in the payment modal, auto-fill full remaining outstanding
+  // When selected invoice changes in the payment modal, auto-fill full
+  // remaining outstanding — split into return credit (up to the customer's
+  // unspent balance) and cash for the rest.
   const handleSelectInvoiceInForm = (invId: string) => {
     setFormInvoiceId(invId);
     const { outstanding } = getInvoiceOutstanding(invId);
-    setFormAmount(outstanding);
+    const inv = invoices[invId];
+    const credit = inv ? getCustomerReturnCredit(inv.customer_id) : 0;
+    const useCredit = roundCurrency(Math.min(credit, outstanding));
+    setFormUseCredit(useCredit);
+    setFormAmount(roundCurrency(outstanding - useCredit));
     setPaymentError('');
   };
+
+  // Editing the credit keeps cash = outstanding − credit as long as the cash
+  // field itself hasn't been hand-edited away from the synced value.
+  const handleUseCreditChange = (val: number) => {
+    const next = roundCurrency(Math.max(0, val));
+    const prev = formUseCredit;
+    setFormUseCredit(next);
+    if (selectedInvOutstanding && formAmount === roundCurrency(selectedInvOutstanding.outstanding - prev)) {
+      setFormAmount(roundCurrency(selectedInvOutstanding.outstanding - next));
+    }
+  };
+
+  // Prefill whenever the modal opens or the selected invoice changes — this
+  // also covers the Collect path (initialInvoiceId), which never fires the
+  // select's onChange.
+  useEffect(() => {
+    if (!isRecordModalOpen || !formInvoiceId) return;
+    const { outstanding } = getInvoiceOutstanding(formInvoiceId);
+    const inv = invoices[formInvoiceId];
+    const credit = inv ? getCustomerReturnCredit(inv.customer_id) : 0;
+    const useCredit = roundCurrency(Math.min(credit, outstanding));
+    setFormUseCredit(useCredit);
+    setFormAmount(roundCurrency(outstanding - useCredit));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isRecordModalOpen, formInvoiceId]);
 
   const handleOpenRecord = () => {
     setPaymentError('');
@@ -64,6 +100,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
     } else {
       setFormInvoiceId('');
       setFormAmount(0);
+      setFormUseCredit(0);
     }
     setFormReference(`REF-${Math.floor(100000 + Math.random() * 900000)}`);
     setFormNotes('Payment receipt remittance');
@@ -85,7 +122,8 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
       paymentMethod: formMethod,
       referenceNumber: formReference.trim(),
       notes: formNotes.trim(),
-      paymentDate: new Date(formDate).toISOString()
+      paymentDate: new Date(formDate).toISOString(),
+      returnCredit: formUseCredit > 0 ? Number(formUseCredit) : undefined
     });
 
     if (!res.success) {
@@ -117,6 +155,9 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
   });
 
   const selectedInvOutstanding = formInvoiceId ? getInvoiceOutstanding(formInvoiceId) : null;
+  const selectedCredit = formInvoiceId && invoices[formInvoiceId]
+    ? getCustomerReturnCredit(invoices[formInvoiceId].customer_id)
+    : 0;
 
   return (
     <div className="space-y-6">
@@ -285,13 +326,37 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
             </div>
           )}
 
+          {/* Return credit: auto-used up to the unspent balance, cash covers the rest */}
+          {selectedCredit > 0 && selectedInvOutstanding && (
+            <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded grid grid-cols-2 gap-3">
+              <div className="font-mono text-[11px]">
+                <div className="text-muted-foreground">{t('payments.creditAvailable')}</div>
+                <div className="font-bold text-emerald-700 dark:text-emerald-300">
+                  {formatINR(selectedCredit)}
+                </div>
+              </div>
+              <div>
+                <Label className="block mb-1">{t('payments.useCredit')}</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max={Math.min(selectedCredit, selectedInvOutstanding.outstanding)}
+                  value={formUseCredit}
+                  onChange={(e) => handleUseCreditChange(Number(e.target.value))}
+                  className="w-full font-mono"
+                />
+              </div>
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label className="block mb-1">{t('payments.amount')}</Label>
               <Input
                 type="number"
                 step="0.01"
-                min="0.01"
+                min="0"
                 max={selectedInvOutstanding?.outstanding || undefined}
                 required
                 value={formAmount}
@@ -299,7 +364,9 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                 className="w-full font-mono font-bold"
               />
               <span className="text-[10px] text-muted-foreground">
-                {t('payments.overpayRule')}
+                {formUseCredit > 0
+                  ? t('payments.creditCashSplit', { credit: formatINR(formUseCredit), total: formatINR(roundCurrency(Number(formAmount) + Number(formUseCredit))) })
+                  : t('payments.overpayRule')}
               </span>
             </div>
 

@@ -27,6 +27,7 @@ export const businessSettings = sqliteTable('business_settings', {
   defaultGstRate: real('default_gst_rate').notNull(),
   stateCode: text('state_code').notNull(),
   logoData: text('logo_data'), // optional PNG/JPEG data URL for PDF watermark (v17), null = none
+  gujaratiName: text('gujarati_name'), // optional Gujarati business name — challan PDF header title (v19), null = use English name
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 });

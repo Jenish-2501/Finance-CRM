@@ -146,6 +146,10 @@ export const SettingsView: React.FC = () => {
       if (result.ok) {
         setLogoDraft(null);
         if (logoFileRef.current) logoFileRef.current.value = '';
+        // This save bumps businessSettings.updated_at; mark it synced so the
+        // keep-form-in-sync effect doesn't mistake it for an external change
+        // and wipe text the user is still editing (e.g. the Gujarati name).
+        lastSyncedRef.current = useAccountingStore.getState().businessSettings.updated_at;
         setLogoMessage({
           kind: 'success',
           text: result.localOnly ? t('settings.savedLocal') : t('settings.savedDb')
@@ -422,6 +426,19 @@ export const SettingsView: React.FC = () => {
                 required
                 value={formData.business_name}
                 onChange={(e) => handleChange('business_name', e.target.value)}
+                className="w-full"
+              />
+            </div>
+
+            <div>
+              <Label className="mb-1">{t('settings.fBizNameGu')}</Label>
+              <Input
+                type="text"
+                maxLength={200}
+                value={formData.gujarati_name ?? ''}
+                onChange={(e) => handleChange('gujarati_name', e.target.value)}
+                placeholder={t('settings.fBizNameGuPh')}
+                title={t('settings.fBizNameGuHint')}
                 className="w-full"
               />
             </div>

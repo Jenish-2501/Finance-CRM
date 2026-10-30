@@ -35,25 +35,28 @@ afterEach(() => cleanup());
 
 // Challans are quantities-only (no rates or values — holding transfer, not a
 // sale). Seed facts: cim-1 = cust-1 / prod-1 / uom-pcs × 300, reference CH-501.
+// Gujarati labels (વિગત/જથ્થો/ગ્રામ) are canvas images, absent in jsdom —
+// assertions anchor on the Latin dynamic values only.
 describe('challan quantities-only display', () => {
-  it('shows dispatched quantity and UOM per line with no rates or values', async () => {
+  it('shows dispatched quantity per line with no rates or values', async () => {
     await loadStore();
     render(<DeliveryChallanPrintView movementId="cim-1" />);
     const text = pdfText();
-    // line qty + footer qty total (the grid carries a Qty and UOM column)
-    expect(text).toContain('Total Dispatched Quantity:');
-    expect(text).toContain('PCS');
+    // Line quantity prints as a bare number for PCS rows (no unit, no rates).
+    expect(text).toContain('300');
+    expect(text).not.toContain('PCS'); // units only print for non-PCS lines
     expect(text).not.toContain('Agreed Rate');
     expect(text).not.toContain('Total Value');
     expect(text).not.toContain('AGREED');
     expect(text).not.toContain('BASE');
     expect(text).not.toContain('Agreed Value in Words');
+    expect(text).not.toContain('Total Dispatched Quantity:'); // old grid label
   });
 
-  it('shows transfer weight in KG once the line hits 1000 gram, gram below', async () => {
+  it('prints weight-priced lines in KG in the weight column', async () => {
     const store = (await loadStore()).getState();
-    // prod-7 is KG-primary: map 1 PCS = 1000 g, stock it, dispatch 4 PCS.
-    expect(store.savePieceWeightMapping('prod-7', 1000).success).toBe(true);
+    // prod-7 is KG-primary: map 1 PCS = 1050 g, stock it, dispatch 4 PCS.
+    expect(store.savePieceWeightMapping('prod-7', 1050).success).toBe(true);
     store.createStockReceipt(
       { supplierName: 'Mill', referenceNumber: 'PO-WT', receiptDate: new Date().toISOString(), notes: '' },
       [{ productId: 'prod-7', unitId: 'uom-kg', quantity: 50, unitCost: 90 }]
@@ -67,29 +70,30 @@ describe('challan quantities-only display', () => {
 
     render(<DeliveryChallanPrintView challanReference="CH-WT-1" />);
     const text = pdfText();
-    // 4 PCS = 4000 g → "4 KG" on the line AND in the totals row (foot shows
-    // the same Total Dispatched Quantity grid with the weight column).
-    expect(text).toContain('4 KG');
-    expect(text).toContain('Total Dispatched Quantity:');
-    // gram-scale values never print as raw grams here (4000 g = 4 KG)
-    expect(text).not.toContain('4000 gram');
+    // 4 PCS = 4200 g → "4.2" in the KG weight column and in the totals row.
+    expect(text).toContain('4.2');
+    // Raw grams and the old KG-suffixed count are gone.
+    expect(text).not.toContain('4200');
+    expect(text).not.toContain('4 KG');
   });
 
-  it('shows business address and contact in the footer, not the header', async () => {
+  it('shows the business name in the header, customer address in the info box', async () => {
     await loadStore();
     render(<DeliveryChallanPrintView movementId="cim-1" />);
     const text = pdfText();
-    // Header carries the business name only…
-    expect(text).toContain('ABC Industries Pvt Ltd');
-    // …address + contact live in the footer, each appearing exactly once.
-    expect(text.split('Ring Road').length - 1).toBe(1);
-    expect(text).toContain('401-405, Apex Business Hub, Ring Road, Surat');
-    expect(text).toContain('Contact: +91 98250 12345');
+    // English fallback while no Gujarati business name is set (jsdom has no
+    // canvas, so a set Gujarati name would not render here either).
+    expect(text).toContain('ABC INDUSTRIES PVT LTD');
+    // Info box carries the customer's street address…
+    expect(text).toContain('GIDC Electronic');
+    // …while the business address and contact labels stay off the booklet.
+    expect(text).not.toContain('Ring Road');
+    expect(text).not.toContain('Contact:');
   });
 
-  it('prints a return slip for RETURN movements with a RETURN CHALLAN stamp', async () => {
+  it('prints a return slip for RETURN movements with a RETURN CHALLAN title', async () => {
     const store = (await loadStore()).getState();
-    expect(store.savePieceWeightMapping('prod-7', 1000).success).toBe(true);
+    expect(store.savePieceWeightMapping('prod-7', 1050).success).toBe(true);
     store.createStockReceipt(
       { supplierName: 'Mill', referenceNumber: 'PO-RT', receiptDate: new Date().toISOString(), notes: '' },
       [{ productId: 'prod-7', unitId: 'uom-kg', quantity: 50, unitCost: 90 }]
@@ -112,8 +116,10 @@ describe('challan quantities-only display', () => {
     render(<DeliveryChallanPrintView challanReference="RET-1" direction="return" />);
     const text = pdfText();
     expect(text).toContain('RETURN CHALLAN');
-    // 1 PCS = 1000 g → KG display, and no dispatch-only rate UI anywhere.
-    expect(text).toContain('1 KG');
+    expect(text).not.toContain('DELIVERY CHALLAN');
+    // 1 PCS = 1050 g → 1.05 KG in the weight column; no rate UI anywhere.
+    expect(text).toContain('1.05');
+    expect(text).not.toContain('1050');
     expect(text).not.toContain('Agreed Rate');
   });
 });

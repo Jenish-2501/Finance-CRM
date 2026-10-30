@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAccountingStore } from '../store/accountingStore';
-import { getMovementBillingStatus, roundCurrency, convertQuantity, toDisplayWeight } from '../utils/calculations';
+import { getMovementBillingStatus, roundCurrency, convertQuantity, toDisplayWeight, formatINR } from '../utils/calculations';
 import {
   Truck,
   RotateCcw,
@@ -71,7 +71,9 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
     invoices,
     invoiceAllocations,
     dispatchBatchInventoryToCustomer,
-    createCustomerReturn,
+    returnBatchFromCustomer,
+    getCustomerDeliveredRates,
+    getCustomerProductInventory,
     suggestNextDocumentNumber,
     getCustomerInventorySummary,
     getCurrentCompanyStock,
@@ -112,14 +114,29 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
     ]
   });
 
-  // Return Form State
-  const [returnForm, setReturnForm] = useState({
-    customerId: 'cust-1',
-    productId: 'prod-1',
+  // Return Form State — multi-item, mirroring the dispatch form. Each line
+  // tracks the product (restricted to what the customer holds) and the
+  // taken-back rate: either a previously delivered price (dropdown) or a
+  // custom on-the-spot entry.
+  interface ReturnLine {
+    productId: string;
+    unitId: string;
+    quantity: number;
+    rateChoice: string; // numeric string of a delivered rate, or 'custom'
+    customRate: string; // raw custom-entry input value
+  }
+  const emptyReturnLine = (): ReturnLine => ({
+    productId: '',
     unitId: 'uom-pcs',
-    quantity: 10,
-    referenceId: ''
+    quantity: 1,
+    rateChoice: '',
+    customRate: ''
   });
+  const [returnForm, setReturnForm] = useState<{
+    customerId: string;
+    referenceId: string;
+    items: ReturnLine[];
+  }>({ customerId: 'cust-1', referenceId: '', items: [emptyReturnLine()] });
 
   // Fall back to the first real customer when a stored id is gone
   // (e.g. seed-only 'cust-1' in a live database) so pickers never sit empty.
@@ -370,11 +387,29 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
     holdingsSafePage * holdingsPageSize
   );
 
-  const unbilledByProduct: Record<string, number> = {};
-  for (const s of getCustomerInventorySummary(effectiveCustomerId)) {
-    unbilledByProduct[s.productId] = s.unbilledQuantity;
-  }
-  const hasAnyUnbilled = Object.values(unbilledByProduct).some((q) => q > 0);
+  // Products a customer currently HOLDS (delivered − returned), regardless of
+  // billing status — everything held is returnable.
+  const heldProductsFor = (customerId: string) => {
+    const list: Array<{ productId: string; productName: string; held: number; unitCode: string }> = [];
+    for (const s of getCustomerInventorySummary(customerId)) {
+      const held = s.currentBalance;
+      if (held > 0) list.push({ productId: s.productId, productName: s.productName, held, unitCode: s.unitCode });
+    }
+    return list;
+  };
+  const heldProducts = heldProductsFor(effectiveCustomerId);
+  const hasAnyHeld = heldProducts.length > 0;
+  // Held list for the customer currently chosen inside the return modal.
+  const returnHeldProducts = heldProductsFor(effectiveReturnCustomerId);
+  const hasAnyHeldProducts = returnHeldProducts.length > 0;
+
+  // Total return credit across all open lines (rate × quantity per line).
+  const totalReturnCredit = roundCurrency(
+    returnForm.items.reduce((sum, it) => {
+      const r = it.rateChoice === 'custom' ? Number(it.customRate) : Number(it.rateChoice);
+      return Number.isFinite(r) && r > 0 ? sum + r * Number(it.quantity) : sum;
+    }, 0)
+  );
 
   const allCustomerMovements = Object.values(customerInventoryMovements)
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
@@ -399,7 +434,10 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
   };
 
   const handleAddDispatchItem = () => {
-    const defaultProd = allProducts[0];
+    // Default the new line to the first product not already picked in
+    // another line, so the fresh row never starts as a duplicate.
+    const takenIds = new Set(dispatchForm.items.map((it) => it.productId));
+    const defaultProd = allProducts.find((p) => !takenIds.has(p.id)) ?? allProducts[0];
     const defaultProdId = defaultProd?.id || 'prod-1';
     setDispatchForm({
       ...dispatchForm,
@@ -422,18 +460,58 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
     });
   };
 
-  const handleOpenReturn = (cId?: string, pId?: string) => {
+  const handleOpenReturn = (cId?: string) => {
     setOperationError('');
     const targetCustomer = cId || effectiveCustomerId;
-    const targetProdId = pId || allProducts[0]?.id || 'prod-1';
     setReturnForm({
       customerId: targetCustomer,
-      productId: targetProdId,
-      unitId: entryUnitFor(targetProdId),
-      quantity: 10,
-      referenceId: suggestNextDocumentNumber(targetCustomer, 'RETURN')
+      referenceId: suggestNextDocumentNumber(targetCustomer, 'RETURN'),
+      items: [initialReturnLineFor(targetCustomer)]
     });
     setIsReturnModalOpen(true);
+  };
+
+  // First held product for a customer ('' when nothing is held) — the return
+  // form's default first line.
+  const firstHeldProductFor = (customerId: string): string => {
+    for (const s of getCustomerInventorySummary(customerId)) {
+      if (s.currentBalance > 0) return s.productId;
+    }
+    return '';
+  };
+
+  const initialReturnLineFor = (customerId: string): ReturnLine => {
+    const line = emptyReturnLine();
+    line.productId = firstHeldProductFor(customerId);
+    line.unitId = line.productId ? entryUnitFor(line.productId) : 'uom-pcs';
+    line.rateChoice = line.productId
+      ? defaultRateChoiceFor(customerId, line.productId)
+      : '';
+    return line;
+  };
+
+  // Default rate choice = the last (highest) previously delivered rate; ''
+  // when nothing was ever delivered/priced, forcing custom entry.
+  const defaultRateChoiceFor = (customerId: string, productId: string): string => {
+    const rates = getCustomerDeliveredRates(customerId, productId);
+    return rates.length > 0 ? String(rates[rates.length - 1]) : '';
+  };
+
+  const handleAddReturnItem = () => {
+    setReturnForm({ ...returnForm, items: [...returnForm.items, emptyReturnLine()] });
+  };
+
+  // Products already picked in one challan line disappear from every other
+  // line's dropdown (own row keeps its selection). Uniqueness is therefore
+  // enforced by the option lists themselves.
+  const dispatchTakenIds = new Set(dispatchForm.items.map((it) => it.productId));
+  const canAddDispatchItem = allProducts.some((p) => !dispatchTakenIds.has(p.id));
+  const returnTakenIds = new Set(returnForm.items.map((it) => it.productId));
+  const canAddReturnItem = returnHeldProducts.some((h) => !returnTakenIds.has(h.productId));
+
+  const handleRemoveReturnItem = (index: number) => {
+    if (returnForm.items.length <= 1) return;
+    setReturnForm({ ...returnForm, items: returnForm.items.filter((_, idx) => idx !== index) });
   };
 
   const handleConfirmDispatch = (e: React.FormEvent) => {
@@ -471,18 +549,30 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
     e.preventDefault();
     setOperationError('');
 
-    const res = createCustomerReturn({
+    if (returnForm.items.length === 0) {
+      setOperationError(t('customerInventory.errNoReturnItems'));
+      return;
+    }
+
+    const res = returnBatchFromCustomer({
       customerId: effectiveReturnCustomerId,
-      productId: returnForm.productId,
-      unitId: entryUnitFor(returnForm.productId),
-      quantity: Number(returnForm.quantity),
-      referenceId: returnForm.referenceId
+      referenceId: returnForm.referenceId.trim(),
+      items: returnForm.items.map((it) => ({
+        productId: it.productId,
+        unitId: entryUnitFor(it.productId),
+        quantity: Number(it.quantity),
+        rate: it.rateChoice === 'custom' ? Number(it.customRate) : Number(it.rateChoice)
+      }))
     });
 
     if (!res.success) {
       setOperationError(res.error || 'Return failed');
     } else {
       setIsReturnModalOpen(false);
+      // Immediately open the generated Return Slip challan for print & preview
+      if (res.referenceId) {
+        openPrint(res.referenceId, 'return');
+      }
     }
   };
 
@@ -529,8 +619,8 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
                 variant="secondary"
                 size="sm"
                 onClick={() => handleOpenReturn(effectiveCustomerId)}
-                disabled={!hasAnyUnbilled}
-                title={hasAnyUnbilled ? t('customerInventory.returnTitle') : t('customerInventory.billedTitle')}
+                disabled={!hasAnyHeld}
+                title={hasAnyHeld ? t('customerInventory.returnTitle') : t('customerInventory.nothingHeldTitle')}
               >
                 <RotateCcw className="w-3.5 h-3.5 text-muted-foreground" />
                 <span>{t('customerInventory.recordReturn')}</span>
@@ -640,9 +730,6 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
                     );
                   }
                   const ch = mc.card;
-                  const firstReturnable = ch.lines.find(
-                    (l) => l.status !== 'BILLED' && (unbilledByProduct[l.productId] ?? 0) > 0
-                  );
                   return (
                     <TR key={ch.key}>
                       <TD>
@@ -737,25 +824,6 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
                             >
                               {t('customerInventory.bill')}
                             </Button>
-                          )}
-                          {firstReturnable ? (
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              onClick={() => handleOpenReturn(effectiveCustomerId, firstReturnable.productId)}
-                              title={t('customerInventory.returnTitle')}
-                              className="text-[11px] px-2 py-1"
-                            >
-                              {t('customerInventory.return')}
-                            </Button>
-                          ) : (
-                            <span
-                              className="inline-flex items-center gap-1 text-[11px] font-mono font-bold text-emerald-800 dark:text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-1 rounded-md"
-                              title={t('customerInventory.billedTitle')}
-                            >
-                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-                              <span>{t('customerInventory.billed')}</span>
-                            </span>
                           )}
                         </div>
                       </TD>
@@ -967,7 +1035,7 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
                 <Truck className="w-3.5 h-3.5 text-foreground" />
                 {t('customerInventory.goodsTitle', { count: dispatchForm.items.length, plural: dispatchForm.items.length > 1 ? 's' : '' })}
               </span>
-              <Button type="button" variant="secondary" size="sm" onClick={handleAddDispatchItem} className="text-[11px] px-2.5 py-1">
+              <Button type="button" variant="secondary" size="sm" onClick={handleAddDispatchItem} disabled={!canAddDispatchItem} className="text-[11px] px-2.5 py-1">
                 <PlusCircle className="w-3 h-3 text-muted-foreground" />
                 <span>{t('customerInventory.addItem')}</span>
               </Button>
@@ -1012,14 +1080,17 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
                         }}
                         className="w-full text-xs"
                       >
-                        {allProducts.map((p) => {
-                          const stock = getCurrentCompanyStock(p.id);
-                          return (
-                            <option key={p.id} value={p.id}>
-                              {p.product_name} (Warehouse: {stock} {uoms[p.primary_unit_id]?.code})
-                            </option>
-                          );
-                        })}
+                        {allProducts
+                          .filter((p) => p.id === item.productId || !dispatchTakenIds.has(p.id))
+                          .map((p) => {
+                            const stock = getCurrentCompanyStock(p.id);
+                            const gu = p.gujarati_name?.trim();
+                            return (
+                              <option key={p.id} value={p.id}>
+                                {p.product_name}{gu ? ` (${gu})` : ''} (Warehouse: {stock} {uoms[p.primary_unit_id]?.code})
+                              </option>
+                            );
+                          })}
                       </Select>
                       <div className="text-[10px] font-mono text-muted-foreground mt-0.5">
                         {t('customerInventory.warehouseAvail')}{' '}
@@ -1101,66 +1172,37 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
         </form>
       </Modal>
 
-      {/* Return Modal */}
+      {/* Return Modal — multi-item mirror of the dispatch modal. Products are
+          limited to what the customer still holds (billed or not); the rate
+          defaults to a previously delivered price (dropdown) with a custom
+          on-the-spot entry. rate × quantity becomes the return credit. */}
       <Modal
         isOpen={isReturnModalOpen}
         onClose={() => setIsReturnModalOpen(false)}
         title={t('customerInventory.returnTitle2')}
         subtitle={t('customerInventory.returnSubtitle')}
-        maxWidth="lg"
+        maxWidth="2xl"
       >
         <form onSubmit={handleConfirmReturn} className="space-y-4 text-xs">
           {operationError && (
             <Alert tone="destructive">{operationError}</Alert>
           )}
 
-          <div>
-            <Label className="mb-1">{t('customerInventory.retCustomer')}</Label>
-            <CustomerPicker
-              value={effectiveReturnCustomerId}
-              onChange={(id) => setReturnForm({ ...returnForm, customerId: id })}
-              customers={customers}
-            />
-          </div>
-
-          <div>
-            <Label className="mb-1">{t('customerInventory.retProduct')}</Label>
-            <Select
-              value={returnForm.productId}
-              onChange={(e) => {
-                setReturnForm({
-                  ...returnForm,
-                  productId: e.target.value,
-                  unitId: entryUnitFor(e.target.value)
-                });
-              }}
-              className="w-full text-xs"
-            >
-              {allProducts.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.product_name}
-                </option>
-              ))}
-            </Select>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label className="mb-1">
-                {(() => {
-                  const m = getPieceWeightMapping(returnForm.productId);
-                  return m
-                    ? `${t('customerInventory.retQty')} (${uoms[m.pcsUnitId]?.code ?? 'PCS'})`
-                    : t('customerInventory.retQty');
-                })()}
-              </Label>
-              <Input
-                type="number"
-                min="1"
-                required
-                value={returnForm.quantity}
-                onChange={(e) => setReturnForm({ ...returnForm, quantity: Number(e.target.value) })}
-                className="w-full font-mono"
+          {/* Consignee and Return Reference */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3 bg-muted border border-border rounded-md">
+            <div className="sm:col-span-2">
+              <Label className="mb-1">{t('customerInventory.retCustomer')}</Label>
+              <CustomerPicker
+                value={effectiveReturnCustomerId}
+                onChange={(id) => {
+                  // Held products differ per customer — reset the lines.
+                  setReturnForm({
+                    customerId: id,
+                    referenceId: suggestNextDocumentNumber(id, 'RETURN'),
+                    items: [initialReturnLineFor(id)]
+                  });
+                }}
+                customers={customers}
               />
             </div>
 
@@ -1171,28 +1213,209 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
                 required
                 value={returnForm.referenceId}
                 onChange={(e) => setReturnForm({ ...returnForm, referenceId: e.target.value })}
-                className="w-full font-mono"
+                className="w-full font-mono font-bold"
                 placeholder={t('customerInventory.retRefPh')}
               />
+              <p className="text-[10px] text-muted-foreground mt-0.5">{t('customerInventory.challanHint')}</p>
             </div>
           </div>
 
-          {(() => {
-            const rp = piecePreviewFor(returnForm.productId, Number(returnForm.quantity));
-            return rp ? (
-              <div className="text-[11px] font-mono font-semibold text-emerald-800 dark:text-emerald-300">
-                {t('customerInventory.pieceWeightPreview', { pcs: Number(returnForm.quantity), grams: rp.grams, kg: rp.kg })}
-              </div>
-            ) : null;
-          })()}
+          {/* Items Section */}
+          <div className="border border-border rounded-md p-3 bg-muted/50 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-foreground uppercase text-[11px] tracking-wider flex items-center gap-1.5">
+                <RotateCcw className="w-3.5 h-3.5 text-foreground" />
+                {t('customerInventory.returnGoodsTitle', { count: returnForm.items.length, plural: returnForm.items.length > 1 ? 's' : '' })}
+              </span>
+              <Button type="button" variant="secondary" size="sm" onClick={handleAddReturnItem} disabled={!canAddReturnItem} className="text-[11px] px-2.5 py-1">
+                <PlusCircle className="w-3 h-3 text-muted-foreground" />
+                <span>{t('customerInventory.addItem')}</span>
+              </Button>
+            </div>
 
-          <div className="flex justify-end gap-2 pt-3 border-t border-border">
-            <Button type="button" variant="secondary" size="sm" onClick={() => setIsReturnModalOpen(false)}>
-              {t('common.cancel')}
-            </Button>
-            <Button type="submit" variant="primary" size="sm">
-              {t('customerInventory.acceptReturn')}
-            </Button>
+            <div className="space-y-2">
+              {returnForm.items.map((item, idx) => {
+                const selectedProd = products[item.productId];
+                const heldPrimary = selectedProd
+                  ? getCustomerProductInventory(effectiveReturnCustomerId, selectedProd.id)
+                  : 0;
+                const prodUom = selectedProd ? uoms[selectedProd.primary_unit_id] : null;
+                const lineMapping = getPieceWeightMapping(item.productId);
+                const entryUomCode = lineMapping
+                  ? uoms[lineMapping.pcsUnitId]?.code
+                  : prodUom?.code;
+                // Held quantity expressed in the line's entry unit (PCS for
+                // piece-mapped products), mirroring the dispatch stock preview.
+                const heldEntry = (() => {
+                  if (!selectedProd) return 0;
+                  const pus = Object.values(productUnits).filter((pu) => pu.product_id === item.productId);
+                  return convertQuantity(heldPrimary, selectedProd.primary_unit_id, entryUnitFor(item.productId), pus);
+                })();
+                const deliveredRates = item.productId
+                  ? getCustomerDeliveredRates(effectiveReturnCustomerId, item.productId)
+                  : [];
+                const effectiveRate = item.rateChoice === 'custom'
+                  ? Number(item.customRate)
+                  : Number(item.rateChoice);
+                const lineCredit = Number.isFinite(effectiveRate) && effectiveRate > 0
+                  ? roundCurrency(effectiveRate * Number(item.quantity))
+                  : 0;
+                const piece = piecePreviewFor(item.productId, Number(item.quantity));
+
+                return (
+                  <div
+                    key={idx}
+                    className="p-3 bg-card border border-border rounded-md grid grid-cols-12 gap-2 items-start"
+                  >
+                    <div className="col-span-12 sm:col-span-5">
+                      <label className="block text-[10px] font-mono text-muted-foreground mb-0.5">
+                        {t('customerInventory.itemLabel', { n: idx + 1 })}
+                      </label>
+                      <Select
+                        value={item.productId}
+                        onChange={(e) => {
+                          const newProdId = e.target.value;
+                          const newItems = [...returnForm.items];
+                          newItems[idx] = {
+                            ...newItems[idx],
+                            productId: newProdId,
+                            unitId: entryUnitFor(newProdId),
+                            rateChoice: defaultRateChoiceFor(effectiveReturnCustomerId, newProdId),
+                            customRate: ''
+                          };
+                          setReturnForm({ ...returnForm, items: newItems });
+                        }}
+                        className="w-full text-xs"
+                      >
+                        <option value="" disabled>
+                          {t('customerInventory.retProductPh')}
+                        </option>
+                        {returnHeldProducts
+                          .filter((h) => h.productId === item.productId || !returnTakenIds.has(h.productId))
+                          .map((h) => {
+                            const gu = products[h.productId]?.gujarati_name?.trim();
+                            return (
+                              <option key={h.productId} value={h.productId}>
+                                {h.productName}{gu ? ` (${gu})` : ''} ({t('customerInventory.retHeld', { qty: h.held, uom: h.unitCode })})
+                              </option>
+                            );
+                          })}
+                      </Select>
+                      <div className="text-[10px] font-mono text-muted-foreground mt-0.5">
+                        {t('customerInventory.customerHolds')}{' '}
+                        <span className="font-bold text-foreground">{heldEntry} {entryUomCode ?? ''}</span>
+                      </div>
+                    </div>
+
+                    <div className="col-span-6 sm:col-span-3">
+                      <label className="block text-[10px] font-mono text-muted-foreground mb-0.5">
+                        {t('customerInventory.qtyLabel', { uom: entryUomCode ?? '' })}
+                      </label>
+                      <Input
+                        type="number"
+                        min="1"
+                        required
+                        value={item.quantity}
+                        onChange={(e) => {
+                          const newItems = [...returnForm.items];
+                          newItems[idx] = {
+                            ...newItems[idx],
+                            quantity: Number(e.target.value)
+                          };
+                          setReturnForm({ ...returnForm, items: newItems });
+                        }}
+                        className="w-full font-mono font-bold text-sm"
+                      />
+                      {piece && (
+                        <div className="text-[11px] font-mono font-semibold text-emerald-800 dark:text-emerald-300 mt-0.5">
+                          {t('customerInventory.pieceWeightPreview', { pcs: Number(item.quantity), grams: piece.grams, kg: piece.kg })}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="col-span-6 sm:col-span-3">
+                      <label className="block text-[10px] font-mono text-muted-foreground mb-0.5">
+                        {t('customerInventory.rateLabel')}
+                      </label>
+                      <Select
+                        value={item.rateChoice}
+                        onChange={(e) => {
+                          const newItems = [...returnForm.items];
+                          newItems[idx] = { ...newItems[idx], rateChoice: e.target.value };
+                          setReturnForm({ ...returnForm, items: newItems });
+                        }}
+                        className="w-full text-xs"
+                      >
+                        {deliveredRates.map((r) => (
+                          <option key={r} value={String(r)}>
+                            {formatINR(r)}
+                          </option>
+                        ))}
+                        <option value="custom">{t('customerInventory.rateCustom')}</option>
+                      </Select>
+                      {item.rateChoice === 'custom' && (
+                        <Input
+                          type="number"
+                          min="0"
+                          step="any"
+                          required
+                          value={item.customRate}
+                          onChange={(e) => {
+                            const newItems = [...returnForm.items];
+                            newItems[idx] = { ...newItems[idx], customRate: e.target.value };
+                            setReturnForm({ ...returnForm, items: newItems });
+                          }}
+                          placeholder={t('customerInventory.rateCustomPh')}
+                          className="w-full font-mono text-xs mt-1"
+                        />
+                      )}
+                      {lineCredit > 0 && (
+                        <div className="text-[11px] font-mono font-semibold text-amber-800 dark:text-amber-300 mt-0.5">
+                          {t('customerInventory.lineCredit', { value: formatINR(lineCredit) })}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="col-span-12 sm:col-span-1 flex justify-end items-start h-full pt-5">
+                      {returnForm.items.length > 1 ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleRemoveReturnItem(idx)}
+                          aria-label={t('customerInventory.removeItem')}
+                          title={t('customerInventory.removeItemTitle')}
+                        >
+                          <Trash2 className="w-4 h-4" aria-hidden="true" />
+                        </Button>
+                      ) : (
+                        <span className="text-[10px] font-mono text-muted-foreground">{t('customerInventory.primary')}</span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between pt-3 border-t border-border">
+            <span className="text-[11px] font-mono text-muted-foreground flex items-center gap-1">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+              {t('customerInventory.willGenerateReturn')}
+            </span>
+
+            <div className="flex items-center gap-3">
+              <span className="text-[11px] font-mono font-bold text-amber-800 dark:text-amber-300">
+                {t('customerInventory.totalCredit', { value: formatINR(totalReturnCredit) })}
+              </span>
+              <Button type="button" variant="secondary" size="sm" onClick={() => setIsReturnModalOpen(false)}>
+                {t('common.cancel')}
+              </Button>
+              <Button type="submit" variant="primary" size="sm" className="shadow-2xs" disabled={!hasAnyHeldProducts}>
+                <Printer className="w-3.5 h-3.5" />
+                <span>{t('customerInventory.confirmReturn')}</span>
+              </Button>
+            </div>
           </div>
         </form>
       </Modal>

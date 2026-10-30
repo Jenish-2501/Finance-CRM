@@ -34,6 +34,7 @@ export interface BusinessSettings {
   default_gst_rate: number; // e.g. 5 for 5% total (2.5% CGST + 2.5% SGST intra-state)
   state_code: string; // e.g. "24" for Gujarat to distinguish intra-state (CGST+SGST) vs inter-state (IGST)
   logo_data?: string | null; // optional PNG/JPEG data URL printed as PDF watermark
+  gujarati_name?: string | null; // optional Gujarati business name — challan PDF header title (v19)
   created_at: string;
   updated_at: string;
 }
@@ -192,6 +193,11 @@ export interface CustomerInventoryMovement {
   reference_type: 'DISPATCH' | 'RETURN' | 'MANUAL_ADJUSTMENT';
   reference_id: string;
   document_id: string | null; // FK → dispatch_documents.id (backfilled by v9)
+  // v20: RETURN rows carry the taken-back unit rate (rate × quantity = the
+  // customer's return credit) and the amount of that credit already applied
+  // to invoices (manual apply, oldest returns first). Other rows leave them.
+  rate?: number | null;
+  credit_applied_amount?: number;
   created_at: string;
   created_by: string; // user id
 }

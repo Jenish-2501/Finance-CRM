@@ -20,6 +20,8 @@ import * as m0015 from './migrations/0015_remove_dispatch_logistics.js';
 import * as m0016 from './migrations/0016_customer_gujarati_name.js';
 import * as m0017 from './migrations/0017_business_logo.js';
 import * as m0018 from './migrations/0018_product_gujarati_name.js';
+import * as m0019 from './migrations/0019_business_gujarati_name.js';
+import * as m0020 from './migrations/0020_return_rate_credit.js';
 
 interface Migration {
   version: number;
@@ -54,6 +56,8 @@ const MIGRATIONS: Migration[] = [
   { version: m0016.version, name: m0016.name, sql: m0016.sql },
   { version: m0017.version, name: m0017.name, sql: m0017.sql },
   { version: m0018.version, name: m0018.name, sql: m0018.sql },
+  { version: m0019.version, name: m0019.name, sql: m0019.sql },
+  { version: m0020.version, name: m0020.name, sql: m0020.sql },
 ];
 
 const MIGRATIONS_TABLE_SQL = `

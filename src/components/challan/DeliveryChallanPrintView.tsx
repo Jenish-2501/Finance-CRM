@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAccountingStore } from '../../store/accountingStore';
-import { roundCurrency, toDisplayWeight } from '../../utils/calculations';
+import { roundCurrency } from '../../utils/calculations';
 import { buildChallanPdf, docToBase64 } from '../../utils/pdfDocuments';
 import type jsPDF from 'jspdf';
 import { Printer, X, Download, RefreshCw } from 'lucide-react';
@@ -10,12 +10,6 @@ import { Alert, Button, Card, Input, Label, Select, Toolbar } from '../ui';
 import { useT } from '../../i18n';
 
 export type ChallanCopyType = 'ORIGINAL' | 'DUPLICATE' | 'TRIPLICATE';
-
-const copyLabels: Record<ChallanCopyType, string> = {
-  ORIGINAL: 'ORIGINAL FOR CONSIGNEE (RECIPIENT)',
-  DUPLICATE: 'DUPLICATE FOR TRANSPORTER',
-  TRIPLICATE: 'TRIPLICATE FOR CONSIGNOR (SUPPLIER)'
-};
 
 interface DeliveryChallanPrintViewProps {
   movementId?: string;
@@ -82,54 +76,34 @@ export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> =
 
   // Document inputs, computed before any conditional return (hooks rule).
   // The challan is quantities-only (no rates or values — it is a holding
-  // transfer, not a sale): PCS lines for mapped products carry their transfer
-  // weight alongside, shown in KG once the line hits 1000 gram, in gram below.
-  // Unmapped lines show qty only, as before.
+  // transfer, not a sale). Each line counts in exactly ONE column: BOX
+  // dispatches fill the Box column (Pcs/Weight stay blank); piece-mapped
+  // products fill ગ્રામ (printed in KG); everything else is a bare Pcs count.
   const docInput = useMemo(() => {
     if (!primaryMovement || !customer) return null;
-    let totalQuantity = 0;
-    let totalWeightGrams = 0;
-    const itemRows = movements.map((mov, idx) => {
+    const itemRows = movements.map((mov) => {
       const prod = products[mov.product_id];
       const uom = uoms[mov.unit_id];
+      const isBoxLine = (uom?.code || '').toUpperCase() === 'BOX';
       const pieceMapping = getPieceWeightMapping(mov.product_id);
-      let weightQty: number | undefined;
-      let weightUom: 'KG' | 'gram' | undefined;
-      if (pieceMapping) {
-        const grams = roundCurrency(mov.quantity * pieceMapping.gramsPerPiece);
-        const shown = toDisplayWeight(grams);
-        weightQty = shown.qty;
-        weightUom = shown.unit;
-        totalWeightGrams = roundCurrency(totalWeightGrams + grams);
-      }
-      totalQuantity += mov.quantity;
+      const grams = !isBoxLine && pieceMapping
+        ? roundCurrency(mov.quantity * pieceMapping.gramsPerPiece)
+        : null;
       return {
-        sNo: idx + 1,
-        movementId: mov.id,
         productName: prod?.product_name || 'Industrial Material',
-        sku: prod?.sku || 'SKU-GEN',
-        description: prod?.description || '',
         quantity: mov.quantity,
         unitCode: uom?.code || 'PCS',
-        weightQty,
-        weightUom,
+        grams,
       };
     });
     return {
       customer,
       primaryMovement,
       itemRows,
-      totalQuantity,
-      totalWeightGrams,
-      totalWeightShown: toDisplayWeight(totalWeightGrams),
       challanDate: new Date(primaryMovement.movement_date || primaryMovement.created_at).toLocaleDateString('en-IN', {
         day: '2-digit',
         month: 'short',
         year: 'numeric'
-      }),
-      timeOfRemoval: new Date(primaryMovement.movement_date || primaryMovement.created_at).toLocaleTimeString('en-IN', {
-        hour: '2-digit',
-        minute: '2-digit'
       }),
     };
   }, [movements, products, uoms, getPieceWeightMapping, primaryMovement, customer]);
@@ -142,16 +116,12 @@ export const DeliveryChallanPrintView: React.FC<DeliveryChallanPrintViewProps> =
       business: businessSettings,
       customer: docInput.customer,
       primaryMovement: docInput.primaryMovement,
-      copyLabel: copyLabels[copyType],
       challanDate: docInput.challanDate,
-      timeOfRemoval: docInput.timeOfRemoval,
       direction,
       itemRows: docInput.itemRows,
-      totalQuantity: docInput.totalQuantity,
-      totalWeightGrams: docInput.totalWeightGrams,
       logoDataUrl: businessSettings.logo_data ?? undefined
     });
-  }, [docInput, copyType, direction, businessSettings]);
+  }, [docInput, direction, businessSettings]);
 
   const printErrorText = (error?: string): string => {
     if (error === 'PRINTER_NOT_FOUND') return 'Printer not found — the list was refreshed, please pick again.';

@@ -99,6 +99,7 @@ import {
   calculateInvoiceTotals,
   calculateInvoiceOutstanding,
   getFyForDate,
+  kolkataCalendarDay,
   getCustomerStateCode,
   suggestCustomerNumber,
   suggestNextPlainNumber
@@ -256,6 +257,41 @@ interface AccountingState {
   // Dispatch-document numbering: one shared plain sequence for challans + returns.
   suggestNextDocumentNumber: (customerId: string, documentType: 'DISPATCH' | 'RETURN') => string;
 
+  // Multi-item customer return (mirror of the batch dispatch). Every line
+  // carries the taken-back unit rate — rate × quantity becomes the customer's
+  // return credit, spendable against their next invoice (manual apply).
+  // Returns are allowed against billed or unbilled stock alike; the only cap
+  // is what the customer still holds (delivered − already returned).
+  returnBatchFromCustomer: (params: {
+    customerId: string;
+    referenceId: string;
+    movementDate?: string;
+    items: Array<{
+      productId: string;
+      unitId: string;
+      quantity: number;
+      /** Taken-back unit rate; undefined/0 records the return without credit. */
+      rate?: number;
+    }>;
+  }) => { success: boolean; movementIds?: string[]; referenceId?: string; error?: string };
+
+  /** Customer's unspent return credit: Σ(rate × quantity − applied) over RETURN movements. */
+  getCustomerReturnCredit: (customerId: string) => number;
+
+  /** Distinct rates at which this customer+product moved (delivered prices for
+      the return-rate dropdown): past invoice unit prices, then the current
+      agreed override, then the product default. Ascending, deduplicated. */
+  getCustomerDeliveredRates: (customerId: string, productId: string) => number[];
+
+  /** Manual credit apply: consumes the customer's return credit (oldest
+      returns first, partial consumption allowed) and records an InvoicePayment
+      so the invoice balance reflects it. */
+  applyReturnCreditToInvoice: (params: {
+    invoiceId: string;
+    amount: number;
+  }) => { success: boolean; paymentId?: string; error?: string };
+
+  // Legacy single-product return — delegates to returnBatchFromCustomer.
   createCustomerReturn: (params: {
     customerId: string;
     productId: string;
@@ -263,6 +299,8 @@ interface AccountingState {
     quantity: number;
     referenceId: string;
     movementDate?: string;
+    /** Taken-back unit rate; defaults to the current agreed price. */
+    rate?: number;
   }) => { success: boolean; error?: string };
 
   createInventoryAdjustment: (params: {
@@ -308,6 +346,9 @@ interface AccountingState {
     referenceNumber: string;
     notes: string;
     paymentDate?: string;
+    /** Return credit consumed alongside the cash (credit + cash ≤ outstanding,
+        credit ≤ the customer's unspent balance; 0/omitted = cash only). */
+    returnCredit?: number;
   }) => { success: boolean; paymentId?: string; error?: string };
 
   cancelInvoicePayment: (paymentId: string, reason: string) => { success: boolean; error?: string };
@@ -1578,51 +1619,55 @@ export const useAccountingStore = create<AccountingState>()(
         return { success: true, movementIds: createdIds, referenceId: refId };
       },
 
-      createCustomerReturn: ({ customerId, productId, unitId, quantity, referenceId, movementDate }) => {
-        if (quantity <= 0) {
-          return { success: false, error: 'Return quantity must be greater than zero.' };
+      // Multi-item customer return. Each line is validated against what the
+      // customer STILL HOLDS (delivered − already returned) — billed or
+      // unbilled stock alike is returnable, so a product can come back after
+      // invoicing too. rate × quantity is recorded per RETURN line as the
+      // customer's return credit (0 when no rate is given).
+      returnBatchFromCustomer: ({ customerId, referenceId, movementDate, items }) => {
+        if (!items || items.length === 0) {
+          return { success: false, error: 'At least one item must be specified for return.' };
+        }
+        for (const item of items) {
+          if (item.quantity <= 0) {
+            return { success: false, error: 'All return quantities must be greater than zero.' };
+          }
+          const rate = item.rate ?? 0;
+          if (rate < 0 || !Number.isFinite(rate)) {
+            return { success: false, error: 'Return rate must be a valid non-negative amount.' };
+          }
         }
 
         const { products, productUnits, customers, getCustomerProductInventory } = get();
-        const product = products[productId];
         const customer = customers[customerId];
-
-        if (!product) return { success: false, error: 'Product not found.' };
         if (!customer) return { success: false, error: 'Customer not found.' };
 
-        // Convert requested return quantity to primary units to check customer inventory balance
-        const pUnits = Object.values(productUnits).filter((pu) => pu.product_id === productId);
-        const qtyInPrimary = convertQuantity(quantity, unitId, product.primary_unit_id, pUnits);
-        const customerStock = getCustomerProductInventory(customerId, productId);
-
-        if (customerStock < qtyInPrimary) {
-          return {
-            success: false,
-            error: `Customer inventory insufficient for return. Held: ${customerStock}, Return attempted: ${qtyInPrimary} (Primary Units)`
-          };
+        // Validate holdings for all items (aggregate duplicates per product so
+        // two lines of the same product cannot jointly overdraw the balance).
+        const requestedPrimary: Record<string, number> = {};
+        for (const item of items) {
+          const product = products[item.productId];
+          if (!product) return { success: false, error: `Product not found: ${item.productId}` };
+          const pUnits = Object.values(productUnits).filter((pu) => pu.product_id === item.productId);
+          const qtyInPrimary = convertQuantity(item.quantity, item.unitId, product.primary_unit_id, pUnits);
+          requestedPrimary[item.productId] = roundCurrency((requestedPrimary[item.productId] || 0) + qtyInPrimary);
         }
-
-        // Returns are accepted only against unbilled stock: once everything the
-        // customer holds is billed, there is nothing left to take back. Uses the
-        // same summary semantics as holdings/billing, so the definition of
-        // "billed" can never drift between screens.
-        const unbilledRow = get()
-          .getCustomerInventorySummary(customerId)
-          .find((s) => s.productId === productId);
-        const unbilled = unbilledRow ? unbilledRow.unbilledQuantity : 0;
-        if (qtyInPrimary > unbilled) {
-          const unitCode = unbilledRow ? unbilledRow.unitCode : '';
-          return {
-            success: false,
-            error: `Only ${unbilled} unbilled ${unitCode} available for return. Billed stock cannot be returned.`
-          };
+        for (const [pid, qty] of Object.entries(requestedPrimary)) {
+          const held = getCustomerProductInventory(customerId, pid);
+          if (held < qty) {
+            const productName = products[pid].product_name;
+            return {
+              success: false,
+              error: `Cannot return more than delivered for "${productName}". Held: ${held}, Return attempted: ${qty}`
+            };
+          }
         }
 
         const now = new Date().toISOString();
         const date = movementDate || now;
-        const cimId = `cim-${Date.now()}`;
-        const imId = `im-${Date.now()}`;
 
+        // One shared plain document sequence with dispatch (v9): the return
+        // slip claims the next number and bumps the floor atomically.
         const floor = get().businessSettings.document_next_number;
         const claim = claimDocumentNumber(
           Object.values(get().dispatchDocuments),
@@ -1648,44 +1693,60 @@ export const useAccountingStore = create<AccountingState>()(
           updated_at: now
         };
 
-        // ATOMIC MUTATION: header + Customer movement (RETURN) + Company movement (CUSTOMER_RETURN)
-        const newCustomerMov: CustomerInventoryMovement = {
-          id: cimId,
-          customer_id: customerId,
-          product_id: productId,
-          unit_id: unitId,
-          quantity,
-          movement_type: 'RETURN',
-          movement_date: date,
-          reference_type: 'RETURN',
-          reference_id: returnRef,
-          document_id: docId,
-          created_at: now,
-          created_by: OWNER_ID
-        };
+        // ATOMIC MUTATION: header + per-line Customer movement (RETURN, with
+        // rate) + per-line Company movement (CUSTOMER_RETURN — stock back in).
+        const newCustomerMovs: Record<string, CustomerInventoryMovement> = {};
+        const newCompanyMovs: Record<string, InventoryMovement> = {};
+        const createdIds: string[] = [];
+        let totalCreditValue = 0;
 
-        const newCompanyMov: InventoryMovement = {
-          id: imId,
-          product_id: productId,
-          unit_id: unitId,
-          quantity,
-          movement_type: 'CUSTOMER_RETURN',
-          movement_date: date,
-          reference_type: 'CUSTOMER_RETURN',
-          reference_id: cimId,
-          notes: `Customer return from ${customer.customer_name} (Ref: ${newCustomerMov.reference_id})`,
-          created_at: now,
-          created_by: OWNER_ID
-        };
+        items.forEach((item, idx) => {
+          const cimId = `cim-${Date.now()}-ret-${idx}`;
+          const imId = `im-${Date.now()}-ret-${idx}`;
+          createdIds.push(cimId);
+          const rate = item.rate && item.rate > 0 ? roundCurrency(item.rate) : null;
+          if (rate !== null) totalCreditValue = roundCurrency(totalCreditValue + rate * item.quantity);
+
+          newCustomerMovs[cimId] = {
+            id: cimId,
+            customer_id: customerId,
+            product_id: item.productId,
+            unit_id: item.unitId,
+            quantity: item.quantity,
+            movement_type: 'RETURN',
+            movement_date: date,
+            reference_type: 'RETURN',
+            reference_id: returnRef,
+            document_id: docId,
+            rate,
+            credit_applied_amount: 0,
+            created_at: now,
+            created_by: OWNER_ID
+          };
+
+          newCompanyMovs[imId] = {
+            id: imId,
+            product_id: item.productId,
+            unit_id: item.unitId,
+            quantity: item.quantity,
+            movement_type: 'CUSTOMER_RETURN',
+            movement_date: date,
+            reference_type: 'CUSTOMER_RETURN',
+            reference_id: cimId,
+            notes: `Customer return from ${customer.customer_name} (Ref: ${returnRef})`,
+            created_at: now,
+            created_by: OWNER_ID
+          };
+        });
 
         set((state) => ({
           customerInventoryMovements: {
             ...state.customerInventoryMovements,
-            [cimId]: newCustomerMov
+            ...newCustomerMovs
           },
           inventoryMovements: {
             ...state.inventoryMovements,
-            [imId]: newCompanyMov
+            ...newCompanyMovs
           },
           dispatchDocuments: {
             ...state.dispatchDocuments,
@@ -1695,22 +1756,146 @@ export const useAccountingStore = create<AccountingState>()(
         }));
 
         persistDiff({
-          customerInventoryMovements: [newCustomerMov as unknown as Record<string, unknown>],
-          inventoryMovements: [newCompanyMov as unknown as Record<string, unknown>],
+          customerInventoryMovements: Object.values(newCustomerMovs) as unknown as Record<string, unknown>[],
+          inventoryMovements: Object.values(newCompanyMovs) as unknown as Record<string, unknown>[],
           dispatchDocuments: [header as unknown as Record<string, unknown>],
           businessSettings: [updatedSettings as unknown as Record<string, unknown>]
         });
 
-        get().logAudit('CUSTOMER_RETURN', 'CUSTOMER_INVENTORY_MOVEMENT', cimId, {
+        get().logAudit('CUSTOMER_RETURN', 'CUSTOMER_INVENTORY_MOVEMENT', createdIds[0], {
           customerId,
           customerName: customer.customer_name,
-          productId,
-          productName: product.product_name,
-          quantity,
-          referenceId: newCustomerMov.reference_id
+          itemsCount: items.length,
+          referenceId: returnRef,
+          totalCreditValue
         });
 
-        return { success: true };
+        return { success: true, movementIds: createdIds, referenceId: returnRef };
+      },
+
+      // Available return credit: what the customer's RETURN lines earned minus
+      // what invoices already consumed (oldest returns first, partial ok).
+      getCustomerReturnCredit: (customerId) => {
+        let credit = 0;
+        for (const m of Object.values(get().customerInventoryMovements)) {
+          if (m.customer_id !== customerId || m.movement_type !== 'RETURN') continue;
+          const earned = (m.rate ?? 0) * m.quantity;
+          credit = roundCurrency(credit + earned - (m.credit_applied_amount ?? 0));
+        }
+        return Math.max(0, credit);
+      },
+
+      // Delivered-price variants for the return-rate dropdown: actual invoice
+      // unit prices first (real money that changed hands), then the current
+      // agreed override, then the product's active list price. Ascending, unique.
+      getCustomerDeliveredRates: (customerId, productId) => {
+        const { invoices, invoiceItems, customerPrices, productPrices } = get();
+        const rates = new Set<number>();
+        const itemsByInvoice = new Map<string, InvoiceItem[]>();
+        for (const ii of Object.values(invoiceItems)) {
+          if (ii.product_id !== productId) continue;
+          const list = itemsByInvoice.get(ii.invoice_id) ?? [];
+          list.push(ii);
+          itemsByInvoice.set(ii.invoice_id, list);
+        }
+        for (const inv of Object.values(invoices)) {
+          if (inv.customer_id !== customerId) continue;
+          for (const ii of itemsByInvoice.get(inv.id) ?? []) {
+            if (ii.unit_price > 0) rates.add(ii.unit_price);
+          }
+        }
+        const override = Object.values(customerPrices).find(
+          (p) => p.customer_id === customerId && p.product_id === productId
+        );
+        if (override && override.price > 0) rates.add(override.price);
+        const activeListPrice = Object.values(productPrices).find(
+          (p) => p.product_id === productId && !p.effective_to
+        );
+        if (activeListPrice && activeListPrice.price > 0) rates.add(activeListPrice.price);
+        return Array.from(rates).sort((a, b) => a - b);
+      },
+
+      // Manual credit apply: consume the customer's unspent return credit
+      // oldest-returns-first (partial consumption allowed — the last movement
+      // may only give part of its credit), then record the applied amount as
+      // an InvoicePayment so the invoice balance reflects the credit.
+      applyReturnCreditToInvoice: ({ invoiceId, amount }) => {
+        const invoice = get().invoices[invoiceId];
+        if (!invoice) return { success: false, error: 'Invoice not found.' };
+        if (amount <= 0) return { success: false, error: 'Credit amount must be greater than zero.' };
+        const available = get().getCustomerReturnCredit(invoice.customer_id);
+        if (amount > available) {
+          return { success: false, error: `Only ${available} return credit available.` };
+        }
+
+        const now = new Date().toISOString();
+        const returnMovs = Object.values(get().customerInventoryMovements)
+          .filter((m) => m.customer_id === invoice.customer_id && m.movement_type === 'RETURN' && (m.rate ?? 0) > 0)
+          .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+        let remaining = amount;
+        const appliedMovs: CustomerInventoryMovement[] = [];
+        for (const m of returnMovs) {
+          if (remaining <= 0) break;
+          const earned = roundCurrency((m.rate ?? 0) * m.quantity);
+          const unspent = roundCurrency(earned - (m.credit_applied_amount ?? 0));
+          if (unspent <= 0) continue;
+          const take = Math.min(unspent, remaining);
+          const updated: CustomerInventoryMovement = {
+            ...m,
+            credit_applied_amount: roundCurrency((m.credit_applied_amount ?? 0) + take)
+          };
+          appliedMovs.push(updated);
+          remaining = roundCurrency(remaining - take);
+        }
+
+        // Payment row settles the receivable with the credit (no cash moves).
+        const payment = get().createInvoicePayment({
+          invoiceId,
+          amount,
+          paymentMethod: 'OTHER',
+          referenceNumber: 'RETURN-CREDIT',
+          notes: 'Applied return credit'
+        });
+        if (!payment.success) {
+          return { success: false, error: payment.error ?? 'Credit application failed.' };
+        }
+
+        set((state) => ({
+          customerInventoryMovements: {
+            ...state.customerInventoryMovements,
+            ...Object.fromEntries(appliedMovs.map((m) => [m.id, m]))
+          }
+        }));
+        persistDiff({
+          customerInventoryMovements: appliedMovs as unknown as Record<string, unknown>[]
+        });
+
+        get().logAudit('RETURN_CREDIT_APPLIED', 'INVOICE', invoiceId, {
+          invoiceNumber: invoice.invoice_number,
+          customerId: invoice.customer_id,
+          amount,
+          movementsConsumed: appliedMovs.map((m) => m.id)
+        });
+
+        return { success: true, paymentId: payment.paymentId };
+      },
+
+      // Legacy single-product return kept for callers/tests — delegates to the
+      // batch action, defaulting the rate to the current agreed price.
+      createCustomerReturn: ({ customerId, productId, unitId, quantity, referenceId, movementDate, rate }) => {
+        const resolvedRate = rate ?? (() => {
+          const override = Object.values(get().customerPrices).find(
+            (p) => p.customer_id === customerId && p.product_id === productId
+          );
+          return override?.price ?? 0;
+        })();
+        return get().returnBatchFromCustomer({
+          customerId,
+          referenceId,
+          movementDate,
+          items: [{ productId, unitId, quantity, rate: resolvedRate }]
+        });
       },
 
       createInventoryAdjustment: ({ productId, unitId, quantity, movementType, notes }) => {
@@ -1832,7 +2017,11 @@ export const useAccountingStore = create<AccountingState>()(
         if (Number.isNaN(Date.parse(invDate))) {
           return { success: false, error: 'Invoice date is invalid.' };
         }
-        if (new Date(invDate).getTime() > Date.now()) {
+        // "Future" means a later CALENDAR DAY (IST — the same calendar the FY
+        // boundary uses), never a later instant: callers send date-only
+        // strings (parsed as UTC midnight) or noon-pinned timestamps, so an
+        // invoice dated today must be accepted at any hour of today.
+        if (kolkataCalendarDay(invDate) > kolkataCalendarDay(now)) {
           return { success: false, error: 'Invoice date cannot be in the future.' };
         }
         const fy = getFyForDate(invDate);
@@ -2080,8 +2269,16 @@ export const useAccountingStore = create<AccountingState>()(
         return { success: true };
       },
 
-      createInvoicePayment: ({ invoiceId, amount, paymentMethod, referenceNumber, notes, paymentDate }) => {
-        if (amount <= 0) return { success: false, error: 'Payment amount must be greater than zero.' };
+      createInvoicePayment: ({ invoiceId, amount, paymentMethod, referenceNumber, notes, paymentDate, returnCredit = 0 }) => {
+        const cashAmount = roundCurrency(amount);
+        const creditAmount = roundCurrency(returnCredit);
+        if (cashAmount < 0 || creditAmount < 0) {
+          return { success: false, error: 'Payment amounts cannot be negative.' };
+        }
+        // Credit may cover the whole outstanding (cash 0); nothing to settle at all is an error.
+        if (cashAmount <= 0 && creditAmount <= 0) {
+          return { success: false, error: 'Payment amount must be greater than zero.' };
+        }
 
         const invoice = get().invoices[invoiceId];
         if (!invoice) return { success: false, error: 'Invoice not found.' };
@@ -2090,42 +2287,109 @@ export const useAccountingStore = create<AccountingState>()(
         }
 
         const { outstanding } = get().getInvoiceOutstanding(invoiceId);
-        if (roundCurrency(amount) > roundCurrency(outstanding)) {
+        const total = roundCurrency(cashAmount + creditAmount);
+        // Credit availability first — the more specific rejection (the
+        // outstanding cap may also trip, but "only X available" explains why).
+        if (creditAmount > 0) {
+          const available = get().getCustomerReturnCredit(invoice.customer_id);
+          if (creditAmount > available) {
+            return { success: false, error: `Only ${available} return credit available.` };
+          }
+        }
+        if (total > roundCurrency(outstanding)) {
           return {
             success: false,
-            error: `Payment amount (${amount}) exceeds remaining outstanding balance (${outstanding}).`
+            error: `Payment amount (${total}) exceeds remaining outstanding balance (${outstanding}).`
           };
         }
 
         const now = new Date().toISOString();
-        const payId = `pay-${Date.now()}`;
-        const newPayment: InvoicePayment = {
-          id: payId,
-          invoice_id: invoiceId,
-          payment_date: paymentDate || now,
-          amount: roundCurrency(amount),
-          payment_method: paymentMethod,
-          reference_number: referenceNumber || `REF-${Math.floor(100000 + Math.random() * 900000)}`,
-          notes: notes || '',
-          status: 'ACTIVE',
-          created_at: now,
-          updated_at: now
-        };
+        const newPayments: InvoicePayment[] = [];
+        let appliedMovs: CustomerInventoryMovement[] = [];
 
-        set((state) => ({
-          invoicePayments: { ...state.invoicePayments, [payId]: newPayment }
-        }));
+        // Credit portion: consume the customer's RETURN movements oldest-first
+        // (same policy as applyReturnCreditToInvoice) and record it as its own
+        // OTHER / RETURN-CREDIT payment row — no cash moves.
+        if (creditAmount > 0) {
+          const returnMovs = Object.values(get().customerInventoryMovements)
+            .filter((m) => m.customer_id === invoice.customer_id && m.movement_type === 'RETURN' && (m.rate ?? 0) > 0)
+            .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
 
-        persistDiff({ invoicePayments: [newPayment as unknown as Record<string, unknown>] });
+          let remaining = creditAmount;
+          for (const m of returnMovs) {
+            if (remaining <= 0) break;
+            const earned = roundCurrency((m.rate ?? 0) * m.quantity);
+            const unspent = roundCurrency(earned - (m.credit_applied_amount ?? 0));
+            if (unspent <= 0) continue;
+            const take = Math.min(unspent, remaining);
+            appliedMovs.push({
+              ...m,
+              credit_applied_amount: roundCurrency((m.credit_applied_amount ?? 0) + take)
+            });
+            remaining = roundCurrency(remaining - take);
+          }
 
-        get().logAudit('PAYMENT_CREATED', 'INVOICE_PAYMENT', payId, {
-          invoiceId,
-          invoiceNumber: invoice.invoice_number,
-          amount: newPayment.amount,
-          paymentMethod
+          newPayments.push({
+            id: `pay-${Date.now()}-credit`,
+            invoice_id: invoiceId,
+            payment_date: paymentDate || now,
+            amount: creditAmount,
+            payment_method: 'OTHER',
+            reference_number: 'RETURN-CREDIT',
+            notes: 'Applied return credit',
+            status: 'ACTIVE',
+            created_at: now,
+            updated_at: now
+          });
+        }
+
+        if (cashAmount > 0) {
+          const payId = `pay-${Date.now()}`;
+          newPayments.push({
+            id: payId,
+            invoice_id: invoiceId,
+            payment_date: paymentDate || now,
+            amount: cashAmount,
+            payment_method: paymentMethod,
+            reference_number: referenceNumber || `REF-${Math.floor(100000 + Math.random() * 900000)}`,
+            notes: notes || '',
+            status: 'ACTIVE',
+            created_at: now,
+            updated_at: now
+          });
+        }
+
+        set((state) => {
+          const payments = { ...state.invoicePayments };
+          for (const p of newPayments) payments[p.id] = p;
+          const movements = { ...state.customerInventoryMovements };
+          for (const m of appliedMovs) movements[m.id] = m;
+          return { invoicePayments: payments, customerInventoryMovements: movements };
         });
 
-        return { success: true, paymentId: payId };
+        persistDiff({ invoicePayments: newPayments as unknown as Record<string, unknown>[] });
+        if (appliedMovs.length > 0) {
+          persistDiff({ customerInventoryMovements: appliedMovs as unknown as Record<string, unknown>[] });
+        }
+
+        for (const p of newPayments) {
+          get().logAudit('PAYMENT_CREATED', 'INVOICE_PAYMENT', p.id, {
+            invoiceId,
+            invoiceNumber: invoice.invoice_number,
+            amount: p.amount,
+            paymentMethod: p.payment_method
+          });
+        }
+        if (appliedMovs.length > 0) {
+          get().logAudit('RETURN_CREDIT_APPLIED', 'INVOICE', invoiceId, {
+            invoiceNumber: invoice.invoice_number,
+            customerId: invoice.customer_id,
+            amount: creditAmount,
+            movementsConsumed: appliedMovs.map((m) => m.id)
+          });
+        }
+
+        return { success: true, paymentId: newPayments[newPayments.length - 1]?.id };
       },
 
       cancelInvoicePayment: (paymentId: string, reason: string) => {

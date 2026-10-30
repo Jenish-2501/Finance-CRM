@@ -74,13 +74,16 @@ Dependencies: M01, M03, M04. Depended on by: M07.
 
 ### M06 inventory — CRITICAL
 Files: `src/utils/calculations.ts` (convertQuantity), `src/store/accountingStore.ts`
-(createStockReceipt, dispatchBatchInventoryToCustomer, createCustomerReturn, createInventoryAdjustment,
-getCurrentCompanyStock, getCustomerProductInventory, getCustomerInventorySummary,
-getBillableMovementsForCustomer), `src/views/CompanyInventoryView.tsx`,
+(createStockReceipt, dispatchBatchInventoryToCustomer, returnBatchFromCustomer, createCustomerReturn [legacy
+wrapper], createInventoryAdjustment, getCurrentCompanyStock, getCustomerProductInventory,
+getCustomerInventorySummary, getBillableMovementsForCustomer, getCustomerReturnCredit,
+getCustomerDeliveredRates, applyReturnCreditToInvoice), `src/views/CompanyInventoryView.tsx`,
 `src/views/CustomerInventoryView.tsx`, `src/components/challan/DeliveryChallanPrintView.tsx`
 Public functions: dual-ledger stock (company `inventory_movements` + consignment
 `customer_inventory_movements`, Rule 55 challan fields); dispatch validates company stock; return validates
-customer holding; explicit `invoice_allocations` link movement↔invoice (no `is_billed` flags).
+customer holding (billed or unbilled stock alike — v20 allows billed returns; the only cap is
+delivered − returned, aggregate across duplicate lines); explicit `invoice_allocations` link movement↔invoice
+(no `is_billed` flags).
 Dispatch documents (v9): one shared plain sequence for challans + returns — number lives ONCE in
 `dispatch_documents` (UNIQUE per customer + type), movements carry `document_id`, creation is
 header-atomic with counter advance and per-customer+type duplicate rejection; challan print groups
@@ -89,27 +92,69 @@ legitimately share numbers); grouping key == unique key makes the backfill inher
 Logistics capture removed (v15): vehicle/transporter/e-way/purpose/site-notes columns dropped
 from movements (other tables' notes untouched); dispatch/return forms, challan screen + PDF show
 place of supply only. Tests in `tests/dispatch-documents/`.
+Return rate + credit (v20): `customer_inventory_movements.rate` /
+`credit_applied_amount` — RETURN rows record the taken-back unit rate (rate × quantity =
+return credit); UI is a dispatch-style multi-item modal (header New Return button, no row-level
+buttons) listing only held products, rate dropdown of delivered-price variants (invoice unit
+prices → agreed override → active list price) + custom entry. `getCustomerReturnCredit` sums
+unspent credit. Credit is spent AT PAYMENT TIME: `createInvoicePayment` takes an optional
+`returnCredit` — the Payments/Collect modal auto-uses min(credit, outstanding), cash covers the
+remainder, validation caps cash + credit at outstanding, the credit portion is recorded as its
+own OTHER / RETURN-CREDIT payment row and consumed oldest-first with partial consumption
+(shared policy with the standalone `applyReturnCreditToInvoice` store action, kept for tests).
+The old row-level Apply Credit button on Invoices was removed (single path through the
+payment modal); Customer Credit view shows earned/applied/available per customer.
 No FIFO/average valuation — quantities only, no cost tracking (gap G3).
 Dependencies: M01, M09, M10. Depended on by: M03, M07.
 
 ### M07 reports — CRITICAL
 Files: `src/views/ReportsView.tsx` (sales/receivables/payments/GST/inventory/consignments + CSV export),
-`src/views/DashboardView.tsx` (KPI aggregation), `src/views/CustomerLedgerView.tsx` (print statement)
+`src/views/DashboardView.tsx` (KPI aggregation), `src/views/CustomerLedgerView.tsx` (print statement
++ Download PDF), `src/views/CustomerCreditView.tsx` (per-customer return-credit balances from v20
+`rate`/`credit_applied_amount` — overview table sorted by available credit, expandable per-slip
+detail; rate-less legacy returns render as "—")
 Behavior: re-aggregates from store in each view (third implementation of sales/outstanding sums alongside
 store selectors and Dashboard — see risk R6). CSV via `files:saveCSV` in Electron, anchor-download in browser.
+CustomerLedgerView PDF wiring: supply rows from `src/utils/ledgerSummary.ts` (`buildSupplySummary` —
+FINALIZED invoice items dated in the period, per-product Σ qty/taxable value/PCS/weight via the
+piece mapping with grams from KG×1000 / GRAM×1 / PCS×gpp, effective rate = value÷qty;
+`previousOutstandingInvoices` — FINALIZED invoices dated before period start with outstanding > 0,
+oldest first; `sumOutstanding`). Pure functions over store slices — no store changes.
 No P&L / balance-sheet / cash-flow / aging / trial-balance (gap G1).
 Dependencies: M01–M06, M16 (file export). Depended on by: M08 (shared totals).
 
 ### M08 pdf-export — CRITICAL (numbers must match screen/DB exactly)
-Files: `src/utils/pdfDocuments.ts` (buildInvoicePdf, buildChallanPdf, docToBase64, input interfaces),
+Files: `src/utils/pdfDocuments.ts` (buildInvoicePdf, buildChallanPdf, buildMovementLedgerPdf,
+buildCustomerLedgerPdf, docToBase64, input interfaces),
 `src/components/common/PdfPreview.tsx`, print views (`InvoicePrintView`, `DeliveryChallanPrintView`)
 PDF parity: the print views build ONE memoized jsPDF document; the on-screen preview embeds it via
 `PdfPreview` (`doc.output('bloburl')` iframe) and print sends those exact bytes through
 `printing:printPdf` (hidden plugins-enabled window renders the PDF, then prints — silent to a chosen
 printer or with the OS dialog). Browser fallback: `window.print()`. No HTML document replica remains.
 Inputs: invoice+items+payments+allocations / challan movement → jsPDF document → base64 → `files:savePDFBytes`.
-Challan is a compact A6 grid (ruled header, full-width consignee box, bordered items grid
-with Weight column, fixed footer); header carries no GSTIN/PAN; layout locked by `tests/challan-pdf/`.
+Challan is a Gujarati booklet replica on A6 (static labels/notice/signature captions drawn as
+canvas-rasterised images via `gujaratiInlineImage` — values stay Latin text): header = title left /
+Gujarati business name (`business_settings.gujarati_name`, v19) centre / `Ph.No :` phone right
+(title and phone share font, size 8, bold and baseline); info box (નામ + સરનામું address | ચલન નં./તારીખ)
+sits flush under the header with the grid directly beneath; fixed-height 10-row grid per page
+(# | Prod Name | Box | Pcs | Weight (KG) — a line counts in exactly one column: BOX-dispatched
+goods fill Box and blank Pcs/Weight, piece-mapped products print gramsPerPiece × qty in KG, else
+`-`), blank ruled filler rows keep the footer position stable; કુલ totals row (per-column Σ);
+bulleted fixed Gujarati notice printed at one uniform glyph size; centred low-opacity logo
+watermark on every page; two signature lines pinned to the page bottom (far left / far right,
+line after the label). Layout locked by `tests/challan-pdf/` (jsdom: Gujarati images absent —
+tests assert Latin values only).
+`buildCustomerLedgerPdf` (CustomerLedgerView Download PDF, A4 portrait): `businessHeader` (compact,
+CUSTOMER LEDGER stamp) → identity block with the customer number in large bold mono far left and
+name / Gujarati nickname (inline canvas image) / GSTIN-meta to its right → PERIOD range right-aligned
+above the tables → side-by-side band: per-product supply autoTable (left ~128mm: # | Product | Qty |
+Unit | PCS | Weight (KG) | Rate | Value + TOTAL foot) and a previous-outstanding box drawn by hand
+(right 54mm: title bar, month-wise due lines — "MONTH YYYY … Rs. X" from
+`previousOutstandingByMonth` (Σ per calendar month of pre-period FINALIZED invoice balances; months
+fully settled are omitted), capped at 12 with "+ N more month(s)", TOTAL DUE rule) → full-width
+statement of account autoTable (Date | Ref | Type | Description | Debit | Credit |
+Balance + TOTAL foot). Money cells pre-formatted by the view as ASCII "Rs. " strings (WinAnsi core
+fonts). Aggregation inputs locked by `tests/ledger-print/summary.test.ts` (pure helpers, no PDF).
 Dependencies: M03, M06, M07, M16.
 
 ### M09 customers

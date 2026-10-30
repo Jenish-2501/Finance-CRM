@@ -1,11 +1,14 @@
 import React, { useState } from 'react';
 import { useAccountingStore } from '../store/accountingStore';
-import { formatINR } from '../utils/calculations';
+import { formatINR, kolkataCalendarDay, roundCurrency, toDisplayWeight } from '../utils/calculations';
+import { buildCustomerLedgerPdf, docToBase64 } from '../utils/pdfDocuments';
+import { buildSupplySummary, previousOutstandingByMonth } from '../utils/ledgerSummary';
 import {
   Printer,
   Building,
   Calendar,
-  Download
+  Download,
+  FileText
 } from 'lucide-react';
 import { CustomerPicker, firstCustomerId } from '../components/common/CustomerPicker';
 import { PrintWatermark } from '../components/common/PrintWatermark';
@@ -17,12 +20,26 @@ interface CustomerLedgerViewProps {
   onOpenInvoice?: (invoiceId: string) => void;
 }
 
+// PDF money cells: ASCII-only ("Rs. ") because jsPDF core fonts are WinAnsi.
+const rsPdf = (n: number) => formatINR(n).replace(/₹/g, 'Rs. ');
+
 export const CustomerLedgerView: React.FC<CustomerLedgerViewProps> = ({
   initialCustomerId = 'cust-1',
   onOpenInvoice
 }) => {
   const { t } = useT();
-  const { customers, getCustomerLedger, getCustomerOutstanding, businessSettings } =
+  const {
+    customers,
+    invoices,
+    products,
+    uoms,
+    invoiceItems,
+    businessSettings,
+    getCustomerLedger,
+    getCustomerOutstanding,
+    getInvoiceOutstanding,
+    getPieceWeightMapping
+  } =
     useAccountingStore();
 
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>(initialCustomerId);
@@ -30,7 +47,7 @@ export const CustomerLedgerView: React.FC<CustomerLedgerViewProps> = ({
   // (e.g. seed-only 'cust-1' in a live database).
   const effectiveCustomerId = firstCustomerId(customers, selectedCustomerId);
   const [startDate, setStartDate] = useState('2026-01-01');
-  const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
+  const [endDate, setEndDate] = useState(kolkataCalendarDay(new Date()));
 
   const customer = customers[effectiveCustomerId];
 
@@ -46,6 +63,75 @@ export const CustomerLedgerView: React.FC<CustomerLedgerViewProps> = ({
 
   const handlePrint = () => {
     window.print();
+  };
+
+  // Print-grade PDF: business header, big customer number, per-product billed
+  // supply for the period, previous-outstanding box, statement of account.
+  const handleDownloadPdf = () => {
+    if (!customer) return;
+    const summaryInput = {
+      invoices,
+      invoiceItems,
+      products,
+      uoms,
+      customerId: effectiveCustomerId,
+      startDate,
+      endDate,
+      getPieceWeightMapping,
+      getInvoiceOutstanding
+    };
+    const supply = buildSupplySummary(summaryInput);
+    const prevMonths = previousOutstandingByMonth(summaryInput);
+
+    const doc = buildCustomerLedgerPdf({
+      business: businessSettings,
+      logoDataUrl: businessSettings.logo_data ?? undefined,
+      customerNumber: customer.customer_number,
+      customerName: customer.customer_name,
+      customerGujaratiName: customer.gujarati_name?.trim() || undefined,
+      customerMeta: [
+        customer.gst_number ? `GSTIN: ${customer.gst_number}` : '',
+        customer.mobile ? `Mobile: ${customer.mobile}` : '',
+        [customer.city, customer.state].filter(Boolean).join(', ')
+      ].filter(Boolean).join(' | '),
+      periodLabel: `${new Date(startDate).toLocaleDateString()} to ${new Date(endDate).toLocaleDateString()}`,
+      supply: supply.map((r) => {
+        const w = r.weightKg !== null ? toDisplayWeight(r.weightKg * 1000) : null;
+        return {
+          productName: r.productName,
+          qty: `${r.qty}`,
+          unitCode: r.unitCode,
+          pcs: r.pcs !== null ? `${r.pcs}` : '-',
+          weightKg: w ? `${w.qty} ${w.unit}` : '-',
+          rate: r.rate !== null ? rsPdf(r.rate) : '-',
+          value: rsPdf(r.value)
+        };
+      }),
+      supplyTotal: rsPdf(supply.reduce((sum, r) => sum + r.value, 0)),
+      previousOutstanding: prevMonths.map((m) => ({ label: m.label, amount: rsPdf(m.total) })),
+      previousOutstandingTotal: rsPdf(prevMonths.reduce((sum, m) => sum + m.total, 0)),
+      statement: filteredLedger.map((e) => ({
+        date: new Date(e.date).toLocaleDateString(),
+        ref: e.referenceNumber,
+        type: e.type,
+        description: e.description,
+        debit: e.debit !== 0 ? rsPdf(e.debit) : '-',
+        credit: e.credit !== 0 ? rsPdf(e.credit) : '-',
+        balance: rsPdf(e.balance)
+      })),
+      statementTotals: {
+        debit: rsPdf(roundCurrency(totalDebits)),
+        credit: rsPdf(roundCurrency(totalCredits)),
+        closing: rsPdf(roundCurrency(filteredLedger.length > 0 ? filteredLedger[filteredLedger.length - 1].balance : 0))
+      }
+    });
+
+    const filename = `Customer-Ledger-${customer.customer_number}-${startDate}_${endDate}.pdf`;
+    if (!window.electronAPI?.files?.savePDFBytes) {
+      doc.save(filename);
+      return;
+    }
+    void window.electronAPI.files.savePDFBytes(filename, docToBase64(doc));
   };
 
   const handleExportCSV = () => {
@@ -87,6 +173,10 @@ export const CustomerLedgerView: React.FC<CustomerLedgerViewProps> = ({
               <Button variant="secondary" size="sm" onClick={handleExportCSV}>
                 <Download className="w-3.5 h-3.5 text-muted-foreground" />
                 <span>{t('ledger.exportCsv')}</span>
+              </Button>
+              <Button variant="secondary" size="md" onClick={handleDownloadPdf} disabled={!customer}>
+                <FileText className="w-3.5 h-3.5" />
+                <span>{t('ledger.downloadPdf')}</span>
               </Button>
               <Button variant="primary" size="md" onClick={handlePrint}>
                 <Printer className="w-3.5 h-3.5" />

@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useAccountingStore } from '../store/accountingStore';
-import { formatINR, calculateTax, roundCurrency, calculateInvoiceTotals, convertQuantity, getFyForDate, getCustomerStateCode } from '../utils/calculations';
+import { formatINR, calculateTax, roundCurrency, calculateInvoiceTotals, convertQuantity, getFyForDate, getCustomerStateCode, kolkataCalendarDay } from '../utils/calculations';
 import {
   CheckCircle,
   AlertCircle,
   Building,
-  Calendar
+  Calendar,
+  Printer
 } from 'lucide-react';
 import { Badge } from '../components/common/Badge';
 import { PageHeader, Alert, Button, Card, CardHeader, Input, Label, TableShell, Table, THead, TBody, TR, TH, TD, Textarea } from '../components/ui';
@@ -14,7 +15,8 @@ import { useT } from '../i18n';
 
 interface BillingViewProps {
   initialCustomerId?: string;
-  onInvoiceCreated: (invoiceId: string) => void;
+  /** openPreview: also open the print preview (print icon path). */
+  onInvoiceCreated: (invoiceId: string, openPreview?: boolean) => void;
 }
 
 export const BillingView: React.FC<BillingViewProps> = ({
@@ -38,12 +40,10 @@ export const BillingView: React.FC<BillingViewProps> = ({
   // (e.g. seed-only 'cust-1' in a live database).
   const effectiveCustomerId = firstCustomerId(customers, selectedCustomerId);
   const [billingPeriodStart, setBillingPeriodStart] = useState('2026-01-01');
-  const [billingPeriodEnd, setBillingPeriodEnd] = useState(
-    new Date().toISOString().split('T')[0]
-  );
+  const [billingPeriodEnd, setBillingPeriodEnd] = useState(() => kolkataCalendarDay(new Date()));
   const [otherCharges, setOtherCharges] = useState(0);
   const [billingNotes, setBillingNotes] = useState('');
-  const [invoiceDate, setInvoiceDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [invoiceDate, setInvoiceDate] = useState(() => kolkataCalendarDay(new Date()));
   const [isCreating, setIsCreating] = useState(false);
   const [isFinalizeImmediately, setIsFinalizeImmediately] = useState(true);
   const [creationError, setCreationError] = useState('');
@@ -171,7 +171,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
     otherCharges
   );
 
-  const handleGenerateInvoice = () => {
+  const handleGenerateInvoice = (openPreview = false) => {
     if (isCreating) return; // double-submit guard: one number per click
     setCreationError('');
     if (activeItemsToBill.length === 0) {
@@ -242,7 +242,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
     if (!result.success || !result.invoiceId) {
       setCreationError(result.error || 'Failed to generate invoice.');
     } else {
-      onInvoiceCreated(result.invoiceId);
+      onInvoiceCreated(result.invoiceId, openPreview);
     }
   };
 
@@ -314,7 +314,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
             type="date"
             required
             value={invoiceDate}
-            max={new Date().toISOString().split('T')[0]}
+            max={kolkataCalendarDay(new Date())}
             onChange={(e) => e.target.value && setInvoiceDate(e.target.value)}
             className="w-full font-mono"
           />
@@ -583,16 +583,29 @@ export const BillingView: React.FC<BillingViewProps> = ({
             <span className="font-mono">{formatINR(estimatedTotals.grandTotal)}</span>
           </div>
 
-          <Button
-            onClick={handleGenerateInvoice}
-            disabled={activeItemsToBill.length === 0 || isCreating}
-            variant="primary"
-            size="md"
-            className="w-full py-2.5 shadow-2xs"
-          >
-            <CheckCircle className="w-4 h-4" />
-            <span>{isCreating ? t('billing.generating') : t('billing.generate')}</span>
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              onClick={() => handleGenerateInvoice(false)}
+              disabled={activeItemsToBill.length === 0 || isCreating}
+              variant="primary"
+              size="md"
+              className="flex-1 py-2.5 shadow-2xs"
+            >
+              <CheckCircle className="w-4 h-4" />
+              <span>{isCreating ? t('billing.generating') : t('billing.generate')}</span>
+            </Button>
+            <Button
+              onClick={() => handleGenerateInvoice(true)}
+              disabled={activeItemsToBill.length === 0 || isCreating}
+              variant="secondary"
+              size="md"
+              className="py-2.5 px-3 shadow-2xs"
+              title={t('billing.generatePrint')}
+              aria-label={t('billing.generatePrint')}
+            >
+              <Printer className="w-4 h-4" />
+            </Button>
+          </div>
         </div>
       </Card>
     </div>

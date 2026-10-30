@@ -12,6 +12,7 @@ import { CustomerPricingView } from './views/CustomerPricingView';
 import { InvoicesView } from './views/InvoicesView';
 import { PaymentsView } from './views/PaymentsView';
 import { CustomerLedgerView } from './views/CustomerLedgerView';
+import { CustomerCreditView } from './views/CustomerCreditView';
 import { ReportsView } from './views/ReportsView';
 import { SettingsView } from './views/SettingsView';
 import { LanguageSettingsView } from './views/settings/LanguageSettingsView';
@@ -95,8 +96,10 @@ export default function App() {
     navigateTab('billing');
   };
 
-  const handleInvoiceCreated = (invoiceId: string) => {
-    setSelectedInvoiceIdForPreview(invoiceId);
+  const handleInvoiceCreated = (invoiceId: string, openPreview = false) => {
+    // The print icon path re-opens the preview; plain save lands on the
+    // invoices table without popping the modal.
+    if (openPreview) setSelectedInvoiceIdForPreview(invoiceId);
     navigateTab('invoices');
   };
 
@@ -196,6 +199,8 @@ export default function App() {
                 onOpenInvoice={handleOpenInvoicePreview}
               />
             )}
+
+            {activeTab === 'customer-credit' && <CustomerCreditView />}
 
             {activeTab === 'reports' && <ReportsView />}
 

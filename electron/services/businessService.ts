@@ -75,6 +75,7 @@ const WRITABLE_SETTINGS_FIELDS = new Set([
   'default_gst_rate',
   'state_code',
   'logo_data',
+  'gujarati_name',
 ]);
 
 // PNG/JPEG data URL cap (~1 MB image). Bigger files are rejected at the
@@ -185,6 +186,14 @@ function validateSettingsRow(row: SettingsRow): SettingsResult | null {
       !LOGO_DATA_URL_RE.test(logo)
     ) {
       return fail('INVALID_LOGO', 'Business logo must be a PNG or JPEG image under 1 MB.');
+    }
+  }
+  // Optional Gujarati business name: empty/null clears it; 200-char cap
+  // (same limit as customer/product gujarati names).
+  const guName = row.gujarati_name;
+  if (guName !== undefined && guName !== null && guName !== '') {
+    if (typeof guName !== 'string' || guName.trim().length === 0 || guName.length > 200) {
+      return fail('INVALID_GUJARATI_NAME', 'Gujarati business name must be 200 characters or fewer.');
     }
   }
   return null;

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useAccountingStore } from '../store/accountingStore';
 import { Product } from '../types/database';
-import { formatINR, toPcsDisplayQty } from '../utils/calculations';
+import { formatINR, toPcsDisplayQty, kolkataCalendarDay } from '../utils/calculations';
 import {
   Plus,
   Search,
@@ -57,7 +57,7 @@ export const ProductsView: React.FC = () => {
   const [newPriceForm, setNewPriceForm] = useState({
     unit_id: '',
     price: 0,
-    effective_from: new Date().toISOString().split('T')[0]
+    effective_from: kolkataCalendarDay(new Date())
   });
 
   // Piece-weight mapping form state (GRAM-primary products billed in KG)
@@ -145,7 +145,7 @@ export const ProductsView: React.FC = () => {
     setNewPriceForm({
       unit_id: prod.primary_unit_id,
       price: 0,
-      effective_from: new Date().toISOString().split('T')[0]
+      effective_from: kolkataCalendarDay(new Date())
     });
     setIsPriceModalOpen(true);
   };

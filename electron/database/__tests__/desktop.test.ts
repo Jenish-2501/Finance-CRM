@@ -95,7 +95,7 @@ function tempDir(prefix: string): string {
   );
   assert.ok(!tables.has('users'), 'legacy users table dropped (single-owner)');
   const vers = getSqlite().prepare('SELECT version FROM _migrations ORDER BY version').all();
-  assert.deepEqual(vers, [{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 }, { version: 14 }, { version: 15 }, { version: 16 }, { version: 17 }, { version: 18 }]);
+  assert.deepEqual(vers, [{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 }, { version: 14 }, { version: 15 }, { version: 16 }, { version: 17 }, { version: 18 }, { version: 19 }, { version: 20 }]);
   closeDatabase();
   console.log('D-5 legacy adoption + update preservation: OK');
 }

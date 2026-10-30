@@ -11,7 +11,7 @@ import { Modal } from '../components/common/Modal';
 import { Badge } from '../components/common/Badge';
 import { Button, Card, CardHeader, PageHeader, SearchInput, TableShell, Table, THead, TBody, TR, TH, TD, Tabs, Input, Label, Select, Alert } from '../components/ui';
 import { useT } from '../i18n';
-import { convertQuantity, roundCurrency, toPcsDisplayQty } from '../utils/calculations';
+import { convertQuantity, roundCurrency, toPcsDisplayQty, kolkataCalendarDay } from '../utils/calculations';
 import { DeliveryChallanPrintView } from '../components/challan/DeliveryChallanPrintView';
 
 export const CompanyInventoryView: React.FC = () => {
@@ -38,7 +38,7 @@ export const CompanyInventoryView: React.FC = () => {
   // Stock Receipt Form
   const [receiptSupplier, setReceiptSupplier] = useState('');
   const [receiptRef, setReceiptRef] = useState('');
-  const [receiptDate, setReceiptDate] = useState(new Date().toISOString().split('T')[0]);
+  const [receiptDate, setReceiptDate] = useState(kolkataCalendarDay(new Date()));
   const [receiptNotes, setReceiptNotes] = useState('');
   // Receipt lines carry quantity only. Selling base price is set at product
   // create / Adjust Price (Products screen) — never here, to avoid two
@@ -91,7 +91,7 @@ export const CompanyInventoryView: React.FC = () => {
   const handleOpenReceipt = () => {
     setReceiptSupplier('');
     setReceiptRef(`PO-${Math.floor(10000 + Math.random() * 90000)}`);
-    setReceiptDate(new Date().toISOString().split('T')[0]);
+    setReceiptDate(kolkataCalendarDay(new Date()));
     setReceiptNotes('');
     const firstId = allProducts[0]?.id || 'prod-1';
     setReceiptItems([{ productId: firstId, unitId: entryUnitFor(firstId), quantity: 500 }]);

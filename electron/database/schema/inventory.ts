@@ -48,6 +48,11 @@ export const customerInventoryMovements = sqliteTable('customer_inventory_moveme
   referenceType: text('reference_type').notNull(),
   referenceId: text('reference_id').notNull(),
   documentId: text('document_id'), // FK → dispatch_documents.id (backfilled by v9)
+  // v20: RETURN rows carry the taken-back unit rate (rate × quantity = the
+  // customer's return credit) and how much of that credit invoices already
+  // consumed (manual apply, oldest returns first). Dispatch rows leave both.
+  rate: real('rate'),
+  creditAppliedAmount: real('credit_applied_amount').notNull().default(0),
   createdAt: text('created_at').notNull(),
   createdBy: text('created_by').notNull(),
 });

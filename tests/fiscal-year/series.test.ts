@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { kolkataCalendarDay } from '../../src/utils/calculations';
 
 // Node has no window; the store guards all bridge access, so a bare stub suffices.
 (globalThis as unknown as { window: unknown }).window = {};
@@ -118,5 +119,29 @@ describe('fiscal-year series — sequential numbering and automatic rollover', (
     const num = state().invoices[r.invoiceId as string].invoice_number;
     expect(state().setSeriesNextNumber('2025-26', Number(num) + 500).success).toBe(true);
     expect(state().invoices[r.invoiceId as string].invoice_number).toBe(num);
+  });
+
+  // Regression: an invoice dated TODAY used to be rejected when created in
+  // the IST morning — a date-only string parses as UTC midnight (05:30 IST)
+  // and the wizard pins local noon, both "later than now" as instants.
+  // Placed last: these burn numbers in the CURRENT FY, which would otherwise
+  // disturb the exact-numbering assertions above.
+  it('an invoice dated today is accepted — date-only and noon-pinned forms', () => {
+    const today = kolkataCalendarDay(new Date());
+    // Exactly what the date input + wizard send: local noon as full ISO.
+    const noonIso = new Date(`${today}T12:00:00`).toISOString();
+    const r1 = makeInvoice(noonIso);
+    expect(r1.success).toBe(true);
+    // Date-only string straight from <input type="date"> (UTC-midnight parse).
+    const r2 = makeInvoice(today);
+    expect(r2.success).toBe(true);
+    expect(state().invoices[r2.invoiceId as string].invoice_date).toBe(today);
+  });
+
+  it('tomorrow and later are still rejected without burning numbers', () => {
+    const before = invoiceCount();
+    const dayAfter = kolkataCalendarDay(new Date(Date.now() + 2 * 86400000));
+    expect(makeInvoice(dayAfter).success).toBe(false);
+    expect(invoiceCount()).toBe(before);
   });
 });

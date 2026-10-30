@@ -342,6 +342,25 @@ export function getFyForDate(isoDate: string): string {
 }
 
 /**
+ * Calendar day (YYYY-MM-DD) of an instant, read in Asia/Kolkata — the SAME
+ * calendar the FY boundary uses above. 'en-CA' emits ISO-shaped output, so
+ * zero-padded results compare correctly as plain strings. This is the
+ * "today" that date pickers and past/future checks must agree on: UTC-based
+ * `toISOString().split('T')[0]` shifts a day for UTC+ zones outside the UTC
+ * window, and instant comparisons reject "today" when it is entered in the
+ * IST morning (a date-only string parses as UTC midnight = 05:30 IST).
+ */
+export function kolkataCalendarDay(instant: string | Date): string {
+  const d = typeof instant === 'string' ? new Date(instant) : instant;
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d);
+}
+
+/**
  * PCS-first display quantity for a piece-mapped product.
  * Ledger math always stays in primary units — this is display only: converts a
  * primary-unit total into its PCS equivalent, or null when unmapped (caller

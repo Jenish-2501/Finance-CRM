@@ -16,7 +16,8 @@ import {
   FileCheck,
   Tag,
   DatabaseBackup,
-  Languages
+  Languages,
+  PiggyBank
 } from 'lucide-react';
 
 export type NavigationTab =
@@ -25,6 +26,7 @@ export type NavigationTab =
   | 'invoices'
   | 'payments'
   | 'ledger'
+  | 'customer-credit'
   | 'customers'
   | 'products'
   | 'company-inventory'
@@ -67,7 +69,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab, role 
         { id: 'pricing' as NavigationTab, label: t('nav.pricing'), icon: Tag },
         { id: 'invoices' as NavigationTab, label: t('nav.invoices'), icon: FileText },
         { id: 'payments' as NavigationTab, label: t('nav.payments'), icon: CreditCard },
-        { id: 'ledger' as NavigationTab, label: t('nav.ledger'), icon: BookOpen }
+        { id: 'ledger' as NavigationTab, label: t('nav.ledger'), icon: BookOpen },
+        { id: 'customer-credit' as NavigationTab, label: t('nav.customerCredit'), icon: PiggyBank }
       ]
     },
     {
