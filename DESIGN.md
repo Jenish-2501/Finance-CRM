@@ -1,5 +1,5 @@
 ---
-name: AccuLedger
+name: Maruti Infotech
 description: Offline-first GST billing, stock, and receivables ledger for a single Indian business.
 colors:
   primary: "oklch(0.4865 0.2423 291.8661)"
@@ -99,13 +99,13 @@ theme:
   print-frozen: "CustomerLedgerView .print-container + utils/pdfDocuments.ts stay black-on-white; InvoicePrintView / DeliveryChallanPrintView preview the jsPDF document itself via common/PdfPreview (iframe), so the PDF is the single source of truth"
 ---
 
-# Design System: AccuLedger
+# Design System: Maruti Infotech
 
 ## Overview
 
 **Creative North Star: "The Violet Ledger"**
 
-AccuLedger keeps the discipline of a well-kept billing counter — dense, exact, tabular — but now speaks in violet. The interface is a light lavender-gray canvas (`background`) with white/violet-tinted cards, violet primary actions, and a full dark mode for late-night reconciliation. Color still reports ledger state (collected, outstanding, void, informational) and nothing else; violet never replaces a money-state color.
+Maruti Infotech keeps the discipline of a well-kept billing counter — dense, exact, tabular — but now speaks in violet. The interface is a light lavender-gray canvas (`background`) with white/violet-tinted cards, violet primary actions, and a full dark mode for late-night reconciliation. Color still reports ledger state (collected, outstanding, void, informational) and nothing else; violet never replaces a money-state color.
 
 The voice is owner-readable clarity. A Surat shop owner doing their own GST billing sees plain section titles ("Billing Wizard", "Available Unbilled Dispatch Movements"), visible grand totals, and mono GSTIN/state-code context wherever tax math depends on it. Paper-trail parity is visual: invoices, challans, and ledgers render black-on-white and survive printing unchanged in both themes.
 

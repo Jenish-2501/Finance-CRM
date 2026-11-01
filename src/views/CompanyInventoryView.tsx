@@ -11,7 +11,7 @@ import { Modal } from '../components/common/Modal';
 import { Badge } from '../components/common/Badge';
 import { Button, Card, CardHeader, PageHeader, SearchInput, TableShell, Table, THead, TBody, TR, TH, TD, Tabs, Input, Label, Select, Alert } from '../components/ui';
 import { useT } from '../i18n';
-import { convertQuantity, roundCurrency, toPcsDisplayQty, kolkataCalendarDay } from '../utils/calculations';
+import { convertQuantity, roundCurrency, toPcsDisplayQty, kolkataCalendarDay, formatBoxPcs } from '../utils/calculations';
 import { DeliveryChallanPrintView } from '../components/challan/DeliveryChallanPrintView';
 
 export const CompanyInventoryView: React.FC = () => {
@@ -22,6 +22,7 @@ export const CompanyInventoryView: React.FC = () => {
     productUnits,
     getCurrentCompanyStock,
     getPieceWeightMapping,
+    getBoxMapping,
     inventoryMovements,
     createStockReceipt,
     createInventoryAdjustment,
@@ -64,10 +65,25 @@ export const CompanyInventoryView: React.FC = () => {
   // Piece-weight entry: mapped products (GRAM/KG primary + PCS mapping) are
   // ALWAYS entered in PCS — inward, adjustment, dispatch, return. The store
   // validates and ledgers in primary units either way.
+  //
+  // Box-packed products: dealer deliveries are strictly box-only (PCS per box
+  // is fixed on the product), so intake and adjustments enter in BOX.
   const entryUnitFor = (productId: string): string => {
     const p = products[productId];
     if (!p) return 'uom-pcs';
+    const box = getBoxMapping(productId);
+    if (box) return box.boxUnitId;
     return getPieceWeightMapping(productId)?.pcsUnitId ?? p.primary_unit_id;
+  };
+
+  // "= N PCS" intake preview for a box-packed line, or null.
+  const boxPcsPreviewFor = (productId: string, quantity: number): string | null => {
+    if (!Number.isFinite(quantity) || quantity <= 0) return null;
+    const box = getBoxMapping(productId);
+    if (!box) return null;
+    const pus = Object.values(productUnits).filter((pu) => pu.product_id === productId);
+    const pcs = convertQuantity(quantity, box.boxUnitId, box.pcsUnitId, pus);
+    return `= ${roundCurrency(pcs).toLocaleString()} PCS`;
   };
 
   // Derived weight preview for a mapped product line, or null.
@@ -244,6 +260,13 @@ export const CompanyInventoryView: React.FC = () => {
                     const pus = Object.values(productUnits).filter((pu) => pu.product_id === prod.id);
                     return toPcsDisplayQty(mapping, stock, prod.primary_unit_id, pus);
                   })();
+                  // Box-packed products lead with "N BOX + M PCS" (PCS total as
+                  // reference) — how the goods physically sit on the shelf.
+                  const boxStock = (() => {
+                    const box = getBoxMapping(prod.id);
+                    if (!box) return null;
+                    return formatBoxPcs(stock, box.pcsPerBox);
+                  })();
 
                   return (
                     <TR key={prod.id}>
@@ -255,7 +278,16 @@ export const CompanyInventoryView: React.FC = () => {
                         <Badge variant="neutral">{uom?.code || 'PCS'}</Badge>
                       </TD>
                       <TD className="text-right font-mono font-bold text-sm">
-                        {piecePcs !== null ? (
+                        {boxStock !== null ? (
+                          <>
+                            <span className={stock > 0 ? 'text-foreground' : 'text-destructive'}>
+                              {boxStock}
+                            </span>{' '}
+                            <span className="text-[11px] font-normal text-muted-foreground">
+                              (≈ {stock.toLocaleString()} {uom?.code})
+                            </span>
+                          </>
+                        ) : piecePcs !== null ? (
                           <>
                             <span className={stock > 0 ? 'text-foreground' : 'text-destructive'}>
                               {piecePcs.toLocaleString()} PCS
@@ -490,6 +522,8 @@ export const CompanyInventoryView: React.FC = () => {
                     <label className="block text-[10px] text-muted-foreground mb-0.5">
                       {t('companyInventory.itemQty')}
                       {(() => {
+                        const box = getBoxMapping(item.productId);
+                        if (box) return ` (${uoms[box.boxUnitId]?.code ?? 'BOX'})`;
                         const m = getPieceWeightMapping(item.productId);
                         return m ? ` (${uoms[m.pcsUnitId]?.code ?? 'PCS'})` : '';
                       })()}
@@ -506,6 +540,14 @@ export const CompanyInventoryView: React.FC = () => {
                       }}
                       className="w-full font-mono"
                     />
+                    {(() => {
+                      const bp = boxPcsPreviewFor(item.productId, Number(item.quantity));
+                      return bp ? (
+                        <div className="text-[10px] font-mono font-semibold text-emerald-800 dark:text-emerald-300 mt-0.5">
+                          {bp}
+                        </div>
+                      ) : null;
+                    })()}
                     {(() => {
                       const pv = piecePreviewFor(item.productId, Number(item.quantity));
                       return pv ? (
@@ -620,6 +662,8 @@ export const CompanyInventoryView: React.FC = () => {
             <Label className="mb-1">
               {t('companyInventory.adjQty')}
               {(() => {
+                const box = getBoxMapping(adjustProductId);
+                if (box) return ` (${uoms[box.boxUnitId]?.code ?? 'BOX'})`;
                 const m = getPieceWeightMapping(adjustProductId);
                 return m ? ` (${uoms[m.pcsUnitId]?.code ?? 'PCS'})` : '';
               })()}
@@ -633,10 +677,10 @@ export const CompanyInventoryView: React.FC = () => {
               className="w-full font-mono"
             />
             {(() => {
-              const pv = piecePreviewFor(adjustProductId, Number(adjustQuantity));
-              return pv ? (
+              const bp = boxPcsPreviewFor(adjustProductId, Number(adjustQuantity));
+              return bp ? (
                 <div className="text-[10px] font-mono font-semibold text-emerald-800 dark:text-emerald-300 mt-0.5">
-                  {t('customerInventory.pieceWeightPreview', { pcs: Number(adjustQuantity), grams: pv.grams, kg: pv.kg })}
+                  {bp}
                 </div>
               ) : null;
             })()}

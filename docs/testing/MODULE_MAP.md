@@ -1,4 +1,4 @@
-# AccuLedger — Module Map (Phase 1 Audit)
+# Maruti Infotech — Module Map (Phase 1 Audit)
 
 Date: 2026-10-09. No code changes in Phase 1 — this document is the audit output.
 Stack: Electron 44 + React 19 + Vite 8 + Tailwind 4 + Zustand + better-sqlite3 + drizzle-orm.
@@ -34,25 +34,48 @@ Dependencies: M01. Depended on by: M03, M07, M11.
 
 ### M03 invoice-calc — CRITICAL
 Files: `src/utils/calculations.ts` (calculateLineItemFinancials, calculateInvoiceTotals),
-`src/store/accountingStore.ts` (createInvoice, finalizeInvoice, cancelInvoice),
+`src/utils/periodNetting.ts` (previewPeriodNetting — pure netting engine),
+`src/utils/invoiceLedger.ts` (buildInvoiceLedgerModel — pure per-invoice ledger model),
+`src/utils/invoiceDocs.ts` (buildInvoiceModeDoc + invoiceDocFilename — ONE doc builder shared by
+preview modal and table actions),
+`src/store/accountingStore.ts` (createInvoice, createInvoiceFromPeriod, previewPeriodNetting,
+finalizeInvoice, cancelInvoice),
 `src/views/BillingView.tsx`, `src/views/InvoicesView.tsx`, `src/components/invoice/InvoicePrintView.tsx`
 Public functions:
 - `calculateLineItemFinancials(qty, price, discount, rate, extra, bizState, custState)` — per-line rounding
 - `calculateInvoiceTotals(items, otherCharges?) → InvoiceTotals` — running-round accumulation
+- `previewPeriodNetting(input) → PeriodNetting` — per-product delivered/returned/brought-forward/net
+  over a from/to window; billing unit = KG (piece-mapped), BOX/PCS anchor (box products, unit of the
+  first delivery challan), else primary; `billQty = max(0, net)`
 - store: create (snapshot customer/business/bank JSON + per-FY plain invoice_number + allocations),
   finalize DRAFT→FINALIZED, cancel (blocked if active payments exist)
+- `createInvoiceFromPeriod({customerId, periodStart, periodEnd, ...})` — nets the window's challans
+  (plus unattached pre-period leftovers as brought-forward), refuses when nothing is billable or a
+  price is missing, and links BOTH delivery and return movements via `invoice_allocations` (positive
+  magnitudes; the movement type carries the sign semantics) so the per-invoice ledger is reproducible.
+Challan-based net billing (the client model): returns are recorded in QUANTITY only (no rate, no
+rupee credit); the invoice bills the NET of delivery − return challans (500 out − 200 back → 300
+billed). One challan shapes ONE invoice (attached movements are excluded from later netting and
+reported in `excluded`); returns beyond the available deliveries stay UNATTACHED and carry forward
+implicitly (negative brought-forward nets against a later period's deliveries — the arithmetic
+closes across periods). Zero-net products stay off the invoice. The Billing view is a period wizard:
+customer + from/to + invoice date + finalize toggle, live challan table and per-product net summary.
+The Invoices table's action menu offers View / Download Ledger·Invoice·Both / Print Ledger·Invoice·Both
+/ Collect; "Both" is ONE merged PDF (ledger pages first, invoice appended via `reuseDoc`).
 Numbering (v7): `invoice_series` counters (UNIQUE fy), `invoices.fy` anchors every number, plain
 sequences restart at `invoice_start_number` (default 1, no prefix/padding); `createInvoice` accepts
 backdated `invoiceDate` (past only) and files by that date's FY with collision skip; Billing has a
 date picker + double-submit guard; Header shows live FY. Identity backstop (v8, owner-approved
 fail-fast): `UNIQUE(fy, invoice_number)` — same number across FYs legal, twice in one FY rejected
-at SQLite. Tests in `tests/fiscal-year/`.
+at SQLite. Tests in `tests/fiscal-year/`, `tests/period-netting/`, `tests/invoice-ledger/`.
 Dependencies: M01, M02, M09 (customer), M10 (product/price), M06 (allocations ↔ dispatch movements).
 Depended on by: M04, M05, M07, M08.
 
 ### M04 ledger — CRITICAL
 Files: `src/store/accountingStore.ts` (getCustomerLedger, getInvoiceOutstanding, getCustomerOutstanding),
-`src/utils/calculations.ts` (calculateInvoiceOutstanding), `src/views/CustomerLedgerView.tsx`
+`src/utils/calculations.ts` (calculateInvoiceOutstanding); `getCustomerLedger` also powers the
+per-customer statement tab inside the Customers drawer (the standalone CustomerLedgerView was removed
+— its job is absorbed by the per-invoice challan ledger, M03/M08)
 Public functions:
 - `calculateInvoiceOutstanding(grandTotal, status, payments)` — CANCELLED → 0/0; only ACTIVE payments count;
   outstanding clamped ≥ 0
@@ -80,10 +103,15 @@ getCustomerInventorySummary, getBillableMovementsForCustomer, getCustomerReturnC
 getCustomerDeliveredRates, applyReturnCreditToInvoice), `src/views/CompanyInventoryView.tsx`,
 `src/views/CustomerInventoryView.tsx`, `src/components/challan/DeliveryChallanPrintView.tsx`
 Public functions: dual-ledger stock (company `inventory_movements` + consignment
-`customer_inventory_movements`, Rule 55 challan fields); dispatch validates company stock; return validates
+`customer_inventory_movements`, Rule 55 challan fields); dispatch validates company stock AGGREGATED
+per product across the batch's lines (box challans legitimately carry the same product twice — one
+BOX line + one loose PCS line — so per-line checks would jointly overdraw); return validates
 customer holding (billed or unbilled stock alike — v20 allows billed returns; the only cap is
 delivered − returned, aggregate across duplicate lines); explicit `invoice_allocations` link movement↔invoice
-(no `is_billed` flags).
+(no `is_billed` flags). Challan form line uniqueness is per product+UNIT for box-packed products
+(same product may appear as BOX and as loose PCS, never twice in the same unit; unit toggles of a
+claimed unit are disabled with `unitTakenOther`); availability/held previews subtract sibling
+same-product lines (`CustomerInventoryView`).
 Dispatch documents (v9): one shared plain sequence for challans + returns — number lives ONCE in
 `dispatch_documents` (UNIQUE per customer + type), movements carry `document_id`, creation is
 header-atomic with counter advance and per-customer+type duplicate rejection; challan print groups
@@ -92,46 +120,52 @@ legitimately share numbers); grouping key == unique key makes the backfill inher
 Logistics capture removed (v15): vehicle/transporter/e-way/purpose/site-notes columns dropped
 from movements (other tables' notes untouched); dispatch/return forms, challan screen + PDF show
 place of supply only. Tests in `tests/dispatch-documents/`.
-Return rate + credit (v20): `customer_inventory_movements.rate` /
-`credit_applied_amount` — RETURN rows record the taken-back unit rate (rate × quantity =
-return credit); UI is a dispatch-style multi-item modal (header New Return button, no row-level
-buttons) listing only held products, rate dropdown of delivered-price variants (invoice unit
-prices → agreed override → active list price) + custom entry. `getCustomerReturnCredit` sums
-unspent credit. Credit is spent AT PAYMENT TIME: `createInvoicePayment` takes an optional
-`returnCredit` — the Payments/Collect modal auto-uses min(credit, outstanding), cash covers the
-remainder, validation caps cash + credit at outstanding, the credit portion is recorded as its
-own OTHER / RETURN-CREDIT payment row and consumed oldest-first with partial consumption
-(shared policy with the standalone `applyReturnCreditToInvoice` store action, kept for tests).
-The old row-level Apply Credit button on Invoices was removed (single path through the
-payment modal); Customer Credit view shows earned/applied/available per customer.
+Return rate + credit (v20 → period billing): `customer_inventory_movements.rate` /
+`credit_applied_amount` remain for LEGACY data only — returns recorded since challan-based net
+billing are QUANTITY-ONLY (`rate: null`, no rupee credit earned; the return form has no rate
+fields). `getCustomerReturnCredit` counts only legacy RETURN rows with `rate > 0`; credit is spent
+AT PAYMENT TIME: `createInvoicePayment` takes an optional `returnCredit` — the Payments/Collect
+modal auto-uses min(credit, outstanding), cash covers the remainder, validation caps cash + credit
+at outstanding, the credit portion is recorded as its own OTHER / RETURN-CREDIT payment row and
+consumed oldest-first with partial consumption (shared policy with the standalone
+`applyReturnCreditToInvoice` store action, kept for tests). The old row-level Apply Credit button on
+Invoices was removed (single path through the payment modal); the standalone Customer Credit view
+was removed with it.
 No FIFO/average valuation — quantities only, no cost tracking (gap G3).
 Dependencies: M01, M09, M10. Depended on by: M03, M07.
 
 ### M07 reports — CRITICAL
-Files: `src/views/ReportsView.tsx` (sales/receivables/payments/GST/inventory/consignments + CSV export),
-`src/views/DashboardView.tsx` (KPI aggregation), `src/views/CustomerLedgerView.tsx` (print statement
-+ Download PDF), `src/views/CustomerCreditView.tsx` (per-customer return-credit balances from v20
-`rate`/`credit_applied_amount` — overview table sorted by available credit, expandable per-slip
-detail; rate-less legacy returns render as "—")
+Files: `src/views/ReportsView.tsx` (sales/receivables/payments/GST/inventory/consignments + CSV export;
+its movement-ledger PDF uses `buildMovementLedgerPdf`),
+`src/views/DashboardView.tsx` (KPI aggregation) — the standalone CustomerLedgerView and
+CustomerCreditView were removed (per-invoice challan ledger + Payments apply-credit absorb their jobs)
 Behavior: re-aggregates from store in each view (third implementation of sales/outstanding sums alongside
 store selectors and Dashboard — see risk R6). CSV via `files:saveCSV` in Electron, anchor-download in browser.
-CustomerLedgerView PDF wiring: supply rows from `src/utils/ledgerSummary.ts` (`buildSupplySummary` —
-FINALIZED invoice items dated in the period, per-product Σ qty/taxable value/PCS/weight via the
-piece mapping with grams from KG×1000 / GRAM×1 / PCS×gpp, effective rate = value÷qty;
-`previousOutstandingInvoices` — FINALIZED invoices dated before period start with outstanding > 0,
-oldest first; `sumOutstanding`). Pure functions over store slices — no store changes.
 No P&L / balance-sheet / cash-flow / aging / trial-balance (gap G1).
 Dependencies: M01–M06, M16 (file export). Depended on by: M08 (shared totals).
 
 ### M08 pdf-export — CRITICAL (numbers must match screen/DB exactly)
-Files: `src/utils/pdfDocuments.ts` (buildInvoicePdf, buildChallanPdf, buildMovementLedgerPdf,
-buildCustomerLedgerPdf, docToBase64, input interfaces),
+Files: `src/utils/pdfDocuments.ts` (buildInvoicePdf, buildInvoiceLedgerPdf, buildInvoiceWithLedgerPdf,
+buildChallanPdf, buildMovementLedgerPdf, docToBase64, input interfaces),
+`src/utils/invoiceDocs.ts` (buildInvoiceModeDoc — shared assembly for every exit path),
 `src/components/common/PdfPreview.tsx`, print views (`InvoicePrintView`, `DeliveryChallanPrintView`)
 PDF parity: the print views build ONE memoized jsPDF document; the on-screen preview embeds it via
 `PdfPreview` (`doc.output('bloburl')` iframe) and print sends those exact bytes through
 `printing:printPdf` (hidden plugins-enabled window renders the PDF, then prints — silent to a chosen
 printer or with the OS dialog). Browser fallback: `window.print()`. No HTML document replica remains.
 Inputs: invoice+items+payments+allocations / challan movement → jsPDF document → base64 → `files:savePDFBytes`.
+Invoice document modes (period billing): `buildInvoiceModeDoc(invoice, items, payments, allocations,
+mode, state)` — 'invoice' = the tax invoice (allocation annex), 'ledger' = the CHALLAN LEDGER
+(per-invoice justification sheet: `buildInvoiceLedgerModel` rebuilds every delivery/return challan
+that shaped the net from `invoice_allocations` — brought-forward rows flagged, per-line
+delivered/returned/net summary tied to the money), 'both' = ONE merged document
+(`buildInvoiceWithLedgerPdf`: ledger pages first, invoice appended via `buildInvoicePdf`'s
+`reuseDoc`/`skipFooterStamp`, single footer/watermark). The Invoices table's Download/Print
+Ledger·Invoice·Both actions and the preview modal all emit the same bytes.
+Ledger reading rules (mirror the Billing screen's challan table): rows of the SAME challan share one
+merged Date / Challan No. / Type cell (autoTable rowSpan — sibling rows provide only product, qty,
+unit, weight), and RETURN rows lead every number with `-` (qty in the movement unit, its KG
+equivalent likewise) so the paper itself shows what came back.
 Challan is a Gujarati booklet replica on A6 (static labels/notice/signature captions drawn as
 canvas-rasterised images via `gujaratiInlineImage` — values stay Latin text): header = title left /
 Gujarati business name (`business_settings.gujarati_name`, v19) centre / `Ph.No :` phone right
@@ -144,17 +178,9 @@ bulleted fixed Gujarati notice printed at one uniform glyph size; centred low-op
 watermark on every page; two signature lines pinned to the page bottom (far left / far right,
 line after the label). Layout locked by `tests/challan-pdf/` (jsdom: Gujarati images absent —
 tests assert Latin values only).
-`buildCustomerLedgerPdf` (CustomerLedgerView Download PDF, A4 portrait): `businessHeader` (compact,
-CUSTOMER LEDGER stamp) → identity block with the customer number in large bold mono far left and
-name / Gujarati nickname (inline canvas image) / GSTIN-meta to its right → PERIOD range right-aligned
-above the tables → side-by-side band: per-product supply autoTable (left ~128mm: # | Product | Qty |
-Unit | PCS | Weight (KG) | Rate | Value + TOTAL foot) and a previous-outstanding box drawn by hand
-(right 54mm: title bar, month-wise due lines — "MONTH YYYY … Rs. X" from
-`previousOutstandingByMonth` (Σ per calendar month of pre-period FINALIZED invoice balances; months
-fully settled are omitted), capped at 12 with "+ N more month(s)", TOTAL DUE rule) → full-width
-statement of account autoTable (Date | Ref | Type | Description | Debit | Credit |
-Balance + TOTAL foot). Money cells pre-formatted by the view as ASCII "Rs. " strings (WinAnsi core
-fonts). Aggregation inputs locked by `tests/ledger-print/summary.test.ts` (pure helpers, no PDF).
+All invoice/ledger PDFs are ASCII-only ("Rs. " for the rupee sign; the "≈" glyph is banned — it
+rendered as garbage in the WinAnsi core fonts, see `tests/invoice/invoicePcsRef.test.tsx`).
+The per-invoice challan ledger is locked by `tests/invoice-ledger/ledgerPdf.test.tsx`.
 Dependencies: M03, M06, M07, M16.
 
 ### M09 customers
@@ -172,8 +198,16 @@ Dependencies: M13, M14 (persistence). Depended on by: M03, M04, M06.
 
 ### M10 products-uom
 Files: `src/types/database.ts`, `electron/database/schema/products.ts`, store (create/updateProduct,
-configureProductUnit, createProductPrice — closes prior active price), `src/views/ProductsView.tsx`,
-businessService UOM guards (code format, uniqueness, cannot deactivate in-use UOM)
+configureProductUnit, createProductPrice — closes prior active price, getBoxMapping — box packing
+selector), `src/views/ProductsView.tsx` (create modal "PCS per BOX" → BOX unit row + BOX-anchored
+price; "N BOX + M PCS" stock card), businessService UOM guards (code format, uniqueness, cannot
+deactivate in-use UOM)
+Behavior (box packing): PCS-primary products may attach BOX with an integer factor ≥ 2 at creation.
+The BOX price is the single pricing anchor — PCS price NEVER stores, it derives (BOX ÷ factor) in
+`getProductEffectivePrice`/`resolvePriceForCustomer`, including customer BOX overrides. Company stock
+intake for box products is box-only with a "= N PCS" preview; billing/challan lines toggle BOX/PCS
+per line (mixed invoices produce one line per product+unit). History is safe: movements store the
+entry unit and convert at read time; factor editing is deferred to a future admin feature.
 Dependencies: M01, M02 (slabs unaffected), M13, M14. Depended on by: M03, M06.
 
 ### M11 business-settings

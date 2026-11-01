@@ -8,7 +8,8 @@ import {
   InvoiceItem,
   InvoicePayment
 } from '../types/database';
-import { formatINR, numberToWordsINR } from './calculations';
+import { formatINR, numberToWordsINR, roundCurrency } from './calculations';
+import { InvoiceLedgerModel, ledgerWeightCell } from './invoiceLedger';
 
 // ---------------------------------------------------------------------------
 // Ledger Counter PDF theme (mirrors DESIGN.md: ink-on-paper, mono figures)
@@ -443,11 +444,15 @@ export interface InvoicePdfInput {
   items: InvoiceItem[];
   payments: InvoicePayment[];
   allocations: Array<{ id: string; customer_inventory_movement_id: string; allocated_quantity: number }>;
-  /** Piece-mapped lines: total PCS per invoice item id, printed under the KG qty. */
-  pcsRef?: Record<string, number>;
   /** Pre-formatted allocation audit lines (challan numbers, grouped). Used
       verbatim when provided; otherwise falls back to raw movement ids. */
   allocationLines?: string[];
+  /** Existing A4 document to draw INTO (combined ledger + invoice print).
+      When set, the builder adds a fresh page instead of a blank document and
+      leaves footer/watermark stamping to the caller. */
+  reuseDoc?: jsPDF;
+  /** Skip the footer stamp + watermark (the combined wrapper stamps once). */
+  skipFooterStamp?: boolean;
   /** Current business logo data URL (PNG/JPEG). Drawn as a centred watermark
       on every page when present; snapshots stay frozen otherwise. */
   logoDataUrl?: string;
@@ -457,8 +462,9 @@ export interface InvoicePdfInput {
 }
 
 export function buildInvoicePdf(input: InvoicePdfInput): jsPDF {
-  const { invoice, items, payments, allocations, pcsRef } = input;
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const { invoice, items, payments, allocations } = input;
+  const doc = input.reuseDoc ?? new jsPDF({ unit: 'mm', format: 'a4' });
+  if (input.reuseDoc) doc.addPage();
   const biz = invoice.business_snapshot;
   const cust = invoice.customer_snapshot;
 
@@ -543,7 +549,7 @@ export function buildInvoicePdf(input: InvoicePdfInput): jsPDF {
       String(idx + 1),
       str(it.product_name_snapshot),
       str(it.sku_snapshot),
-      pcsRef?.[it.id] ? `${it.quantity}\n(≈ ${pcsRef[it.id]} PCS)` : String(it.quantity),
+      String(it.quantity),
       str(it.uom_snapshot),
       rs(it.unit_price),
       rs(it.taxable_amount),
@@ -657,8 +663,230 @@ export function buildInvoicePdf(input: InvoicePdfInput): jsPDF {
   doc.setFontSize(7.5);
   doc.text(str(biz.business_name).substring(0, 40), PAGE_W - MARGIN, y + 12, { align: 'right' });
 
-  stampFooter(doc, 'AccuLedger - Tax Invoice', str(invoice.invoice_number));
-  drawWatermark(doc, input.logoDataUrl, 210, 297);
+  if (!input.skipFooterStamp) {
+    stampFooter(doc, 'Maruti Infotech - Tax Invoice', str(invoice.invoice_number));
+    drawWatermark(doc, input.logoDataUrl, 210, 297);
+  }
+  return doc;
+}
+
+// ---------------------------------------------------------------------------
+// INVOICE CHALLAN LEDGER — the per-invoice justification sheet. Lists every
+// challan movement that shaped the invoice's net (deliveries and accepted
+// returns, movement units), then a per-line summary tying the net quantity to
+// the money. Shares the invoice's A4 theme; ASCII only (no rupee glyph).
+// ---------------------------------------------------------------------------
+export interface InvoiceLedgerPdfInput {
+  model: InvoiceLedgerModel;
+  invoice: Invoice;
+  business: BusinessSettings;
+  /** GSTIN / mobile / city one-liner under the customer name. */
+  customerMeta?: string;
+  customerGujaratiName?: string;
+  logoDataUrl?: string;
+  /** Draw into an existing A4 doc (combined ledger + invoice). */
+  reuseDoc?: jsPDF;
+  /** Footer + watermark (skipped when the combined wrapper stamps once). */
+  finalizeStamp?: boolean;
+}
+
+export function buildInvoiceLedgerPdf(input: InvoiceLedgerPdfInput): jsPDF {
+  const { model, invoice } = input;
+  const doc = input.reuseDoc ?? new jsPDF({ unit: 'mm', format: 'a4' });
+  if (input.reuseDoc) doc.addPage();
+  const biz = input.business;
+  const bizPhone = str(biz.phone, '');
+
+  let y = businessHeader(doc, {
+    name: str(biz.business_name || biz.legal_name, 'Business'),
+    sub:
+      biz.legal_name &&
+      biz.legal_name.trim() &&
+      biz.legal_name.trim() !== (biz.business_name || '').trim()
+        ? biz.legal_name.trim()
+        : '',
+    address: `${str(biz.address, '')} ${str(biz.city, '')}, ${str(biz.state, '')} - ${str(biz.postal_code, '')}`.trim(),
+    metaLines: [
+      `GSTIN: ${str(biz.gst_number)}  |  PAN: ${str(biz.pan)}`,
+      ...(bizPhone ? [`Phone: ${bizPhone}`] : [])
+    ],
+    stamp: 'CHALLAN LEDGER',
+    metaRight: [
+      ['Invoice No:', str(invoice.invoice_number)],
+      ['Invoice Date:', fmtDate(invoice.invoice_date)],
+      ['Period:', `${str(invoice.billing_period_start, '-')} to ${str(invoice.billing_period_end, '-')}`]
+    ]
+  }, { width: PAGE_W, margin: MARGIN, compact: true, top: 12 });
+
+  const guImg = (input.customerGujaratiName ?? '').trim()
+    ? gujaratiInlineImage((input.customerGujaratiName ?? '').trim(), 8)
+    : null;
+  y = sectionCustomerLine(doc, y, model.customerName, str(input.customerMeta, ''), guImg);
+  doc.setFont(SANS, 'normal');
+  doc.setFontSize(7.5);
+  doc.setTextColor(...MUTED);
+  y += 1;
+
+  // Challan movements — brought-forward rows first (pre-period challans that
+  // shaped the net), then the period's own challans in date order. Rows of
+  // the SAME challan share one merged Date / Challan No. / Type cell, so a
+  // multi-product challan reads as one group ("in this challan these products
+  // moved"). Returned quantities carry a leading minus so the paper itself
+  // shows what came back.
+  const qtyCell = (n: number) => String(roundCurrency(n));
+  type LedgerRow = InvoiceLedgerModel['rows'][number];
+  const signedQty = (r: LedgerRow) =>
+    r.kind === 'RETURN' ? `-${qtyCell(r.quantity)}` : qtyCell(r.quantity);
+  type ChallanCell = string | { content: string; rowSpan?: number; colSpan?: number; styles?: Record<string, unknown> };
+  const bfRows = model.rows.filter((r) => r.broughtForward);
+  const periodRows = model.rows.filter((r) => !r.broughtForward);
+  const challanBody: ChallanCell[][] = [];
+  if (bfRows.length > 0) {
+    challanBody.push([{
+      content: `Brought forward - challans dated outside ${str(invoice.billing_period_start, '-')} to ${str(invoice.billing_period_end, '-')} that shape this bill`,
+      colSpan: 7,
+      styles: { halign: 'left', fontStyle: 'bold', fillColor: WASH, textColor: MUTED }
+    }]);
+  }
+  // One visual group per challan: the first row carries merged (rowSpan)
+  // Date / Challan No. / Type cells; its sibling product rows fill only the
+  // remaining columns.
+  const signedWeightCell = (r: LedgerRow) => {
+    const cell = ledgerWeightCell(r.weightKg);
+    return r.kind === 'RETURN' && r.weightKg !== null ? `-${cell}` : cell;
+  };
+  const pushChallanGroups = (rows: LedgerRow[]) => {
+    let i = 0;
+    while (i < rows.length) {
+      let j = i;
+      while (j < rows.length && rows[j].challanRef === rows[i].challanRef && rows[j].kind === rows[i].kind) j++;
+      const span = j - i;
+      challanBody.push([
+        { content: fmtDate(rows[i].date), rowSpan: span },
+        { content: rows[i].challanRef, rowSpan: span },
+        { content: rows[i].kind, rowSpan: span },
+        rows[i].productName,
+        signedQty(rows[i]),
+        rows[i].unitCode,
+        signedWeightCell(rows[i])
+      ]);
+      for (let k = i + 1; k < j; k++) {
+        challanBody.push([rows[k].productName, signedQty(rows[k]), rows[k].unitCode, signedWeightCell(rows[k])]);
+      }
+      i = j;
+    }
+  };
+  pushChallanGroups(bfRows);
+  pushChallanGroups(periodRows);
+
+  autoTable(doc, {
+    startY: y,
+    margin: { left: MARGIN, right: MARGIN },
+    head: [['Date', 'Challan / Slip No.', 'Type', 'Product', 'Qty', 'UOM', 'Weight']],
+    body: challanBody.length > 0
+      ? challanBody
+      : [['', '', '', 'No challan movements linked to this invoice', '', '', '']],
+    theme: 'grid',
+    styles: { font: MONO, fontSize: 7, textColor: INK, cellPadding: 1.6, lineColor: LINE, lineWidth: 0.25 },
+    headStyles: { fontStyle: 'bold', textColor: [255, 255, 255], fillColor: INK },
+    columnStyles: {
+      0: { cellWidth: 22 },
+      1: { cellWidth: 28 },
+      2: { cellWidth: 20 },
+      4: { halign: 'right', fontStyle: 'bold' },
+      5: { cellWidth: 14 },
+      6: { halign: 'right' }
+    }
+  });
+  y = tableEndY(doc) + 6;
+
+  // Billing summary — per invoice line: net quantity ties to the money.
+  y = sectionLabel(doc, 'Net Quantity Billed (Delivery - Return)', y);
+  autoTable(doc, {
+    startY: y,
+    margin: { left: MARGIN, right: MARGIN },
+    head: [['Product', 'Delivered', 'Returned', 'Net', 'UOM', 'Rate', 'Taxable Value']],
+    body: model.summaries.map((s) => [
+      s.productName,
+      qtyCell(s.deliveredQty),
+      qtyCell(s.returnedQty),
+      qtyCell(s.netQty),
+      s.unitCode,
+      rs(s.rate),
+      rs(s.taxableValue)
+    ]),
+    foot: [[
+      { content: 'Total', colSpan: 5, styles: { halign: 'right', fontStyle: 'bold', fillColor: WASH } },
+      { content: rs(model.totalTaxable), styles: { fontStyle: 'bold', fillColor: WASH } }
+    ]],
+    theme: 'grid',
+    styles: { font: MONO, fontSize: 7, textColor: INK, cellPadding: 1.6, lineColor: LINE, lineWidth: 0.25 },
+    headStyles: { fontStyle: 'bold', textColor: [255, 255, 255], fillColor: INK },
+    footStyles: { fontStyle: 'bold', textColor: INK, fillColor: WASH },
+    columnStyles: {
+      1: { halign: 'right' },
+      2: { halign: 'right' },
+      3: { halign: 'right', fontStyle: 'bold' },
+      5: { halign: 'right' },
+      6: { halign: 'right' }
+    }
+  });
+  y = tableEndY(doc) + 4;
+
+  // Money tie-out: the same totals the tax invoice carries.
+  autoTable(doc, {
+    startY: y,
+    margin: { left: MARGIN, right: MARGIN },
+    body: [
+      [{ content: 'Taxable Amount:', colSpan: 4, styles: { halign: 'right' as const } }, rs(invoice.taxable_amount)],
+      ...(invoice.cgst > 0
+        ? [[{ content: 'CGST:', colSpan: 4, styles: { halign: 'right' as const } }, rs(invoice.cgst)]]
+        : []),
+      ...(invoice.sgst > 0
+        ? [[{ content: 'SGST:', colSpan: 4, styles: { halign: 'right' as const } }, rs(invoice.sgst)]]
+        : []),
+      ...(invoice.igst > 0
+        ? [[{ content: 'IGST (Inter-state):', colSpan: 4, styles: { halign: 'right' as const } }, rs(invoice.igst)]]
+        : []),
+      ...(invoice.other_charges > 0
+        ? [[{ content: 'Other / Freight Charges:', colSpan: 4, styles: { halign: 'right' as const } }, rs(invoice.other_charges)]]
+        : []),
+      [{ content: 'Grand Total:', colSpan: 4, styles: { halign: 'right' as const, fontStyle: 'bold' as const, fillColor: WASH } }, { content: rs(invoice.grand_total), styles: { fontStyle: 'bold' as const, fillColor: WASH } }]
+    ],
+    theme: 'grid',
+    styles: { font: MONO, fontSize: 7, textColor: INK, cellPadding: 1.2, lineColor: LINE, lineWidth: 0.25 },
+    columnStyles: { 0: { cellWidth: 130 }, 1: { halign: 'right' } }
+  });
+  y = tableEndY(doc) + 4;
+
+  if (y > 250) {
+    doc.addPage();
+    y = 16;
+  }
+  doc.setFont(SANS, 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(...MUTED);
+  doc.text('Challan-wise movement statement supporting the invoice quantity.', MARGIN, y + 12);
+  doc.text('Authorised Signatory', PAGE_W - MARGIN, y + 4, { align: 'right' });
+  doc.setDrawColor(...FAINT);
+  doc.setLineWidth(0.3);
+  doc.line(PAGE_W - MARGIN - 55, y + 8, PAGE_W - MARGIN, y + 8);
+  doc.setFontSize(7.5);
+  doc.text(str(biz.business_name).substring(0, 40), PAGE_W - MARGIN, y + 12, { align: 'right' });
+
+  if (input.finalizeStamp !== false) {
+    stampFooter(doc, 'Maruti Infotech - Challan Ledger', str(invoice.invoice_number));
+    drawWatermark(doc, input.logoDataUrl, 210, 297);
+  }
+  return doc;
+}
+
+/** Ledger first, invoice after — ONE document for Download Both / Print Both. */
+export function buildInvoiceWithLedgerPdf(ledgerInput: InvoiceLedgerPdfInput, invoiceInput: InvoicePdfInput): jsPDF {
+  const doc = buildInvoiceLedgerPdf({ ...ledgerInput, finalizeStamp: false });
+  buildInvoicePdf({ ...invoiceInput, reuseDoc: doc, skipFooterStamp: true });
+  stampFooter(doc, 'Maruti Infotech - Challan Ledger + Tax Invoice', str(ledgerInput.invoice.invoice_number));
+  drawWatermark(doc, ledgerInput.logoDataUrl, 210, 297);
   return doc;
 }
 
@@ -879,20 +1107,23 @@ export function buildChallanPdf(input: ChallanPdfInput): jsPDF {
     const boxLine = isBoxRow(r);
     doc.setFont(SANS, 'normal');
     doc.setTextColor(...INK);
+    // A return slip prints every quantity with a leading minus — anyone
+    // holding the paper sees at a glance that these goods came BACK.
+    const sign = isReturn ? '-' : '';
     doc.text(String(i + 1), (colX[0] + colX[1]) / 2, ty + 3.6, { align: 'center' });
     doc.text(str(r.productName, '-').substring(0, 30), colX[1] + 1.5, ty + 3.6);
     if (boxLine) {
       // Box-dispatched line: the count goes in the Box column; Pcs and
       // Weight stay blank (a dash) per the booklet's one-column rule.
-      doc.text(String(r.quantity).substring(0, 10), colX[3] - 1.5, ty + 3.6, { align: 'right' });
+      doc.text(`${sign}${String(r.quantity)}`.substring(0, 10), colX[3] - 1.5, ty + 3.6, { align: 'right' });
       doc.text('-', colX[4] - 1.5, ty + 3.6, { align: 'right' });
       doc.text('-', colX[5] - 1.5, ty + 3.6, { align: 'right' });
     } else {
       doc.text('-', colX[3] - 1.5, ty + 3.6, { align: 'right' });
-      doc.text(String(r.quantity).substring(0, 10), colX[4] - 1.5, ty + 3.6, { align: 'right' });
+      doc.text(`${sign}${String(r.quantity)}`.substring(0, 10), colX[4] - 1.5, ty + 3.6, { align: 'right' });
       if (r.grams !== null && r.grams !== undefined) {
         doc.setFont(SANS, 'bold');
-        doc.text(kgText(r.grams).substring(0, 10), colX[5] - 1.5, ty + 3.6, { align: 'right' });
+        doc.text(`${sign}${kgText(r.grams)}`.substring(0, 10), colX[5] - 1.5, ty + 3.6, { align: 'right' });
         doc.setFont(SANS, 'normal');
       } else {
         doc.text('-', colX[5] - 1.5, ty + 3.6, { align: 'right' });
@@ -920,9 +1151,12 @@ export function buildChallanPdf(input: ChallanPdfInput): jsPDF {
   doc.setFontSize(7.5);
   doc.setTextColor(...INK);
   guLabel(doc, 'કુલ', (colX[1] + colX[2]) / 2, ty + footH - 1.9, 7.5, 'center', 10);
-  doc.text(boxTotal > 0 ? String(boxTotal) : '-', colX[3] - 1.5, ty + footH - 1.9, { align: 'right' });
-  doc.text(pcsTotal > 0 ? String(pcsTotal) : '-', colX[4] - 1.5, ty + footH - 1.9, { align: 'right' });
-  doc.text(gramsTotal > 0 ? kgText(gramsTotal) : '-', colX[5] - 1.5, ty + footH - 1.9, { align: 'right' });
+  // A return slip's totals carry the same leading minus as its lines —
+  // the paper reads "these amounts went back", not "these came out".
+  const totalSign = isReturn ? '-' : '';
+  doc.text(boxTotal > 0 ? `${totalSign}${boxTotal}` : '-', colX[3] - 1.5, ty + footH - 1.9, { align: 'right' });
+  doc.text(pcsTotal > 0 ? `${totalSign}${pcsTotal}` : '-', colX[4] - 1.5, ty + footH - 1.9, { align: 'right' });
+  doc.text(gramsTotal > 0 ? `${totalSign}${kgText(gramsTotal)}` : '-', colX[5] - 1.5, ty + footH - 1.9, { align: 'right' });
   strokeFrame(gridTop, ty + footH);
   ty += footH + 6; // breathing room between the table footer and the notice
 
@@ -967,7 +1201,7 @@ export function buildChallanPdf(input: ChallanPdfInput): jsPDF {
   guLabel(doc, 'માલ આપનારની સહી', W - M - 18, sigY, 7.5, 'right', 30);
   doc.line(W - M - 16, sigY + 1, W - M, sigY + 1);
 
-  stampFooter(doc, `AccuLedger - ${isReturn ? 'Return' : 'Delivery'} Challan ${str(mov.reference_id)}`, '', { h: PAGE_H - 3, margin: M, width: W }, []);
+  stampFooter(doc, `Maruti Infotech - ${isReturn ? 'Return' : 'Delivery'} Challan ${str(mov.reference_id)}`, '', { h: PAGE_H - 3, margin: M, width: W }, []);
   drawWatermark(doc, input.logoDataUrl, W, PAGE_H);
   return doc;
 }
@@ -1078,240 +1312,11 @@ export function buildMovementLedgerPdf(input: MovementLedgerPdfInput): jsPDF {
     formatAddress(biz.address, biz.city, biz.state, biz.postal_code ? `${biz.postal_code}, India` : 'India'),
     ...(bizPhone ? [`Contact: ${bizPhone}`] : []),
   ];
-  stampFooter(doc, `AccuLedger - Movement Ledger ${str(input.customerName).substring(0, 30)}`, '', { h: 290, margin: MARGIN, width: PAGE_W }, footerExtras);
+  stampFooter(doc, `Maruti Infotech - Movement Ledger ${str(input.customerName).substring(0, 30)}`, '', { h: 290, margin: MARGIN, width: PAGE_W }, footerExtras);
   drawWatermark(doc, input.logoDataUrl, 210, 297);
   return doc;
 }
 
-// ---------------------------------------------------------------------------
-// Customer Ledger print (CustomerLedgerView): identity block with the big
-// customer number far left, per-product billed supply for the period,
-// previous-outstanding side box, and the statement of account. All row cells
-// arrive pre-formatted (builder convention — views own the display logic).
-// ---------------------------------------------------------------------------
-export interface CustomerLedgerPdfInput {
-  business: BusinessSettings;
-  customerNumber: string;
-  customerName: string;
-  /** GSTIN / mobile / city one-liner for the identity block. */
-  customerMeta: string;
-  /** Gujarati nickname, printed under the English name. */
-  customerGujaratiName?: string;
-  /** Pre-formatted "from - to" range shown right-aligned above the tables. */
-  periodLabel: string;
-  supply: Array<{
-    productName: string;
-    qty: string;
-    unitCode: string;
-    pcs: string;
-    weightKg: string;
-    rate: string;
-    value: string;
-  }>;
-  supplyTotal: string;
-  /** Month-wise pre-period dues — only months with a balance. */
-  previousOutstanding: Array<{
-    label: string;
-    amount: string;
-  }>;
-  previousOutstandingTotal: string;
-  statement: Array<{
-    date: string;
-    ref: string;
-    type: string;
-    description: string;
-    debit: string;
-    credit: string;
-    balance: string;
-  }>;
-  statementTotals: { debit: string; credit: string; closing: string };
-  logoDataUrl?: string;
-}
-
-export function buildCustomerLedgerPdf(input: CustomerLedgerPdfInput): jsPDF {
-  const { business: biz } = input;
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
-  const bizPhone = str(biz.phone, '');
-
-  let y = businessHeader(doc, {
-    name: str(biz.business_name, 'Business'),
-    sub: '',
-    address: formatAddress(biz.address, biz.city, biz.state, biz.postal_code),
-    metaLines: [
-      `GSTIN: ${str(biz.gst_number)}  |  PAN: ${str(biz.pan)}`,
-      ...(bizPhone ? [`Contact: ${bizPhone}`] : []),
-    ],
-    stamp: 'CUSTOMER LEDGER',
-    metaRight: [],
-  }, { width: PAGE_W, margin: MARGIN, compact: true, top: 12 });
-
-  // Identity block: customer number in BIG mono digits far left; name,
-  // Gujarati nickname and meta to its right.
-  const numY = y + 10;
-  const num = str(input.customerNumber).substring(0, 14);
-  doc.setFont(MONO, 'bold');
-  doc.setFontSize(24);
-  doc.setTextColor(...INK);
-  doc.text(num, MARGIN, numY);
-  const nx = MARGIN + doc.getTextWidth(num) + 6;
-
-  doc.setFont(SANS, 'bold');
-  doc.setFontSize(11.5);
-  doc.text(str(input.customerName).substring(0, 42), nx, numY - 4.5);
-
-  // Gujarati nickname on its own line below the name (canvas-rendered PNG —
-  // jsPDF core fonts cannot shape Indic scripts).
-  const guImg = gujaratiInlineImage(input.customerGujaratiName ?? '', 10, 100);
-  let metaY = numY - 0.5;
-  if (guImg) {
-    const guH = pdfLineHeight(10);
-    doc.addImage(guImg.dataUrl, 'PNG', nx + 0.5, numY + 0.2, guImg.w, guImg.h);
-    metaY = numY + 0.2 + guH + 0.8;
-  }
-  doc.setFont(MONO, 'normal');
-  doc.setFontSize(7.5);
-  doc.setTextColor(...MUTED);
-  doc.text(str(input.customerMeta).substring(0, 80), nx, metaY);
-
-  // Period range, right-aligned above the tables.
-  y = numY + 8;
-  doc.setFont(MONO, 'bold');
-  doc.setFontSize(8);
-  doc.setTextColor(...MUTED);
-  doc.text(`PERIOD: ${str(input.periodLabel).toUpperCase()}`, PAGE_W - MARGIN, y, { align: 'right' });
-  y += 5;
-
-  const boxTop = y;
-
-  // Left column: per-product billed supply for the period (~128mm wide; the
-  // right 54mm stay free for the outstanding box).
-  autoTable(doc, {
-    startY: y,
-    margin: { left: MARGIN, right: PAGE_W - MARGIN - 128 },
-    head: [['#', 'Product', 'Qty', 'Unit', 'PCS', 'Weight (KG)', 'Rate', 'Value']],
-    body: input.supply.length > 0
-      ? input.supply.map((r, i) => [
-          String(i + 1), r.productName, r.qty, r.unitCode, r.pcs, r.weightKg, r.rate, r.value
-        ])
-      : [['', '', '', 'Nothing supplied in this period', '', '', '', '']],
-    foot: input.supply.length > 0
-      ? [['', 'TOTAL', '', '', '', '', '', input.supplyTotal]]
-      : undefined,
-    theme: 'grid',
-    styles: { font: MONO, fontSize: 7, textColor: INK, cellPadding: 1.6, lineColor: LINE, lineWidth: 0.25 },
-    headStyles: { fontStyle: 'bold', textColor: [255, 255, 255], fillColor: INK },
-    footStyles: { fontStyle: 'bold', textColor: INK, fillColor: WASH },
-    columnStyles: {
-      0: { cellWidth: 5, halign: 'right' },
-      1: { cellWidth: 27 },
-      2: { cellWidth: 10, halign: 'right', fontStyle: 'bold' },
-      3: { cellWidth: 9 },
-      4: { cellWidth: 10, halign: 'right' },
-      5: { cellWidth: 15, halign: 'right' },
-      6: { cellWidth: 22, halign: 'right' },
-      7: { cellWidth: 30, halign: 'right', fontStyle: 'bold' }
-    }
-  });
-  const supplyEnd = tableEndY(doc);
-
-  // Right column: previous-month dues (FINALIZED invoices dated before the
-  // period that still carry a balance, bucketed by calendar month).
-  const boxX = PAGE_W - MARGIN - 54;
-  const boxW = 54;
-  const MAX_BOX_ROWS = 12;
-  const shown = input.previousOutstanding.slice(0, MAX_BOX_ROWS);
-  const hidden = input.previousOutstanding.length - shown.length;
-  const rowH = 4.2;
-  const boxInnerH = 7 + 4 + shown.length * rowH + (hidden > 0 ? 4 : 0) + 6;
-  const boxBottom = Math.max(boxTop + boxInnerH, supplyEnd + 2);
-  doc.setFillColor(...WASH);
-  doc.setDrawColor(...LINE);
-  doc.roundedRect(boxX, boxTop, boxW, boxBottom - boxTop, 1.5, 1.5, 'FD');
-
-  doc.setFillColor(...INK);
-  doc.rect(boxX, boxTop, boxW, 6, 'F');
-  doc.setFont(MONO, 'bold');
-  doc.setFontSize(7);
-  doc.setTextColor(255, 255, 255);
-  doc.text('PREVIOUS OUTSTANDING', boxX + boxW / 2, boxTop + 4, { align: 'center', baseline: 'middle' });
-
-  let by = boxTop + 10;
-  doc.setFontSize(6.5);
-  if (shown.length === 0) {
-    doc.setTextColor(...MUTED);
-    doc.text('No dues from before this period', boxX + 3, by);
-    by += rowH;
-  }
-  for (const r of shown) {
-    doc.setFont(MONO, 'normal');
-    doc.setTextColor(...INK);
-    doc.text(str(r.label).substring(0, 16), boxX + 3, by);
-    doc.setFont(MONO, 'bold');
-    doc.setTextColor(...INK);
-    doc.text(str(r.amount), boxX + boxW - 3, by, { align: 'right' });
-    by += rowH;
-  }
-  if (hidden > 0) {
-    doc.setFont(MONO, 'normal');
-    doc.setTextColor(...MUTED);
-    doc.text(`+ ${hidden} more month(s)`, boxX + 3, by);
-    by += rowH;
-  }
-  // Total line pinned to the bottom of the box.
-  doc.setDrawColor(...INK);
-  doc.setLineWidth(0.3);
-  doc.line(boxX + 3, boxBottom - 6, boxX + boxW - 3, boxBottom - 6);
-  doc.setFont(MONO, 'bold');
-  doc.setFontSize(7);
-  doc.setTextColor(...INK);
-  doc.text('TOTAL DUE', boxX + 3, boxBottom - 2.5);
-  doc.text(str(input.previousOutstandingTotal), boxX + boxW - 3, boxBottom - 2.5, { align: 'right' });
-
-  // Statement of account, full width below both columns.
-  y = Math.max(supplyEnd, boxBottom) + 8;
-  y = sectionLabel(doc, 'Statement of Account', y);
-  autoTable(doc, {
-    startY: y,
-    margin: { left: MARGIN, right: MARGIN },
-    head: [['Date', 'Ref', 'Type', 'Description', 'Debit', 'Credit', 'Balance']],
-    body: input.statement.length > 0
-      ? input.statement.map((r) => [r.date, r.ref, r.type, r.description, r.debit, r.credit, r.balance])
-      : [['', '', '', 'No entries in the selected period', '', '', '']],
-    foot: input.statement.length > 0
-      ? [['', '', '', 'TOTAL', input.statementTotals.debit, input.statementTotals.credit, input.statementTotals.closing]]
-      : undefined,
-    theme: 'grid',
-    styles: { font: MONO, fontSize: 7.5, textColor: INK, cellPadding: 1.5, lineColor: LINE, lineWidth: 0.25 },
-    headStyles: { fontStyle: 'bold', textColor: [255, 255, 255], fillColor: INK },
-    footStyles: { fontStyle: 'bold', textColor: INK, fillColor: WASH },
-    columnStyles: {
-      0: { cellWidth: 20 },
-      1: { cellWidth: 21 },
-      2: { cellWidth: 16 },
-      4: { cellWidth: 27, halign: 'right' },
-      5: { cellWidth: 27, halign: 'right' },
-      6: { cellWidth: 27, halign: 'right', fontStyle: 'bold' }
-    }
-  });
-
-  const footerExtras = [
-    formatAddress(biz.address, biz.city, biz.state, biz.postal_code ? `${biz.postal_code}, India` : 'India'),
-    ...(bizPhone ? [`Contact: ${bizPhone}`] : []),
-  ];
-  stampFooter(
-    doc,
-    `AccuLedger - Customer Ledger ${str(input.customerName).substring(0, 26)} (${str(input.customerNumber).substring(0, 12)})`,
-    '',
-    { h: 290, margin: MARGIN, width: PAGE_W },
-    footerExtras
-  );
-  drawWatermark(doc, input.logoDataUrl, 210, 297);
-  return doc;
-}
-
-// ---------------------------------------------------------------------------
-// Output helpers
-// ---------------------------------------------------------------------------
 export function docToBase64(doc: jsPDF): string {
   const buf = doc.output('arraybuffer') as ArrayBuffer;
   const bytes = new Uint8Array(buf);

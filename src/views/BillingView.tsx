@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { Fragment, useState } from 'react';
 import { useAccountingStore } from '../store/accountingStore';
-import { formatINR, calculateTax, roundCurrency, calculateInvoiceTotals, convertQuantity, getFyForDate, getCustomerStateCode, kolkataCalendarDay } from '../utils/calculations';
+import { formatINR, calculateTax, roundCurrency, calculateInvoiceTotals, getFyForDate, getCustomerStateCode, kolkataCalendarDay } from '../utils/calculations';
 import {
   CheckCircle,
   AlertCircle,
@@ -9,7 +9,7 @@ import {
   Printer
 } from 'lucide-react';
 import { Badge } from '../components/common/Badge';
-import { PageHeader, Alert, Button, Card, CardHeader, Input, Label, TableShell, Table, THead, TBody, TR, TH, TD, Textarea } from '../components/ui';
+import { PageHeader, Alert, Button, Card, Input, Label, TableShell, Table, THead, TBody, TR, TH, TD, Textarea } from '../components/ui';
 import { CustomerPicker, firstCustomerId } from '../components/common/CustomerPicker';
 import { useT } from '../i18n';
 
@@ -19,6 +19,12 @@ interface BillingViewProps {
   onInvoiceCreated: (invoiceId: string, openPreview?: boolean) => void;
 }
 
+// Challan-based period billing: pick a from/to window and the invoice is
+// generated on the NET of every delivery and return challan inside it
+// (500 PCS delivered - 200 PCS returned = 300 PCS billed). Returns never
+// touch money directly — they reduce the bill. The invoice's allocations
+// link both kinds of challan, so the per-invoice ledger document is
+// reproducible forever (Invoices view: Download/Print Ledger).
 export const BillingView: React.FC<BillingViewProps> = ({
   initialCustomerId = 'cust-1',
   onInvoiceCreated
@@ -28,11 +34,8 @@ export const BillingView: React.FC<BillingViewProps> = ({
     customers,
     businessSettings,
     invoiceSeries,
-    productUnits,
-    getBillableMovementsForCustomer,
-    resolvePriceForCustomer,
-    getPieceWeightMapping,
-    createInvoice
+    previewPeriodNetting,
+    createInvoiceFromPeriod
   } = useAccountingStore();
 
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>(initialCustomerId);
@@ -48,190 +51,58 @@ export const BillingView: React.FC<BillingViewProps> = ({
   const [isFinalizeImmediately, setIsFinalizeImmediately] = useState(true);
   const [creationError, setCreationError] = useState('');
 
-  // Selected movement quantities to bill: { [movementId: string]: number }
-  const [selectedAllocations, setSelectedAllocations] = useState<Record<string, number>>({});
-
   const customer = customers[effectiveCustomerId];
 
-  // Load unbilled dispatch movements
-  const billableMovements = getBillableMovementsForCustomer(effectiveCustomerId);
-
-  // Billing basis per movement. Piece-mapped products (PCS dispatch, KG billing)
-  // bill in KG at the KG price (base or customer-agreed); everything else bills
-  // in its dispatch unit exactly as before. Allocations below always stay in
-  // movement (PCS) units — only the invoice line converts to KG.
-  interface BillBasis {
-    isPiece: boolean;
-    unitId: string;
-    unitCode: string;
-    price: number;
-    isCustom: boolean;
-    pcsUnitId: string | null;
-  }
-  const billBasisFor = (
-    m: (typeof billableMovements)[number]
-  ): BillBasis => {
-    const mapping = getPieceWeightMapping(m.productId);
-    if (!mapping) {
-      return {
-        isPiece: false,
-        unitId: m.unitId,
-        unitCode: m.unitCode,
-        price: m.applicablePrice,
-        isCustom: m.isCustomPrice,
-        pcsUnitId: null
-      };
-    }
-    const resolved = resolvePriceForCustomer(m.productId, mapping.kgUnitId, effectiveCustomerId);
-    return {
-      isPiece: true,
-      unitId: mapping.kgUnitId,
-      unitCode: 'KG',
-      price: resolved.price,
-      isCustom: resolved.isCustom,
-      pcsUnitId: mapping.pcsUnitId
-    };
-  };
-  const toBillingQty = (m: (typeof billableMovements)[number], basis: BillBasis, pcsQty: number): number => {
-    if (!basis.isPiece || !basis.pcsUnitId) return pcsQty;
-    const pus = Object.values(productUnits).filter((pu) => pu.product_id === m.productId);
-    return convertQuantity(pcsQty, basis.pcsUnitId, basis.unitId, pus);
-  };
-
-  // Auto-fill allocation map with available quantities when customer changes
-  useEffect(() => {
-    const initialMap: Record<string, number> = {};
-    for (const m of billableMovements) {
-      initialMap[m.movementId] = m.availableBillableQuantity;
-    }
-    setSelectedAllocations(initialMap);
-  }, [effectiveCustomerId, billableMovements.length]);
-
-  const handleQuantityChange = (movementId: string, maxQty: number, value: number) => {
-    const validQty = Math.max(0, Math.min(maxQty, roundCurrency(value)));
-    setSelectedAllocations((prev) => ({
-      ...prev,
-      [movementId]: validQty
-    }));
-  };
-
-  // Group active allocations by product to construct invoice items.
-  // quantityToBill stays in movement units (PCS) for the allocation rows;
-  // billingQty is the invoice-line quantity in the billing unit (KG if mapped).
-  const activeItemsToBill: Array<{
-    movement: typeof billableMovements[0];
-    quantityToBill: number;
-    billingQty: number;
-    billingUnitId: string;
-    billingPrice: number;
-    subtotal: number;
-    taxBreakdown: ReturnType<typeof calculateTax>;
-    total: number;
-  }> = [];
-
-  for (const m of billableMovements) {
-    const qty = selectedAllocations[m.movementId] || 0;
-    if (qty > 0) {
-      const basis = billBasisFor(m);
-      const billingQty = toBillingQty(m, basis, qty);
-      const lineSubtotal = roundCurrency(billingQty * basis.price);
-      const tax = calculateTax(
-        lineSubtotal,
-        businessSettings.default_gst_rate,
-        businessSettings.state_code,
-        customer ? getCustomerStateCode(customer) : '24'
-      );
-      activeItemsToBill.push({
-        movement: m,
-        quantityToBill: qty,
-        billingQty,
-        billingUnitId: basis.unitId,
-        billingPrice: basis.price,
-        subtotal: lineSubtotal,
-        taxBreakdown: tax,
-        total: roundCurrency(lineSubtotal + tax.totalTax)
-      });
-    }
-  }
+  // Live netting for the selected customer + window. Products whose net is
+  // zero or negative stay off the invoice — their unattached returns carry
+  // forward to the next period automatically.
+  const netting = previewPeriodNetting(effectiveCustomerId, billingPeriodStart, billingPeriodEnd);
+  const billableLines = netting.billableLines;
+  const unpriced = billableLines.filter((l) => !(l.rate > 0));
 
   // Live GST labels: total rate from settings, split equally into CGST/SGST
   const halfGstRate = businessSettings.default_gst_rate / 2;
 
-  // Pre-calculate invoice totals preview
+  // Pre-calculate invoice totals preview (mirrors the store's per-line math).
   const estimatedTotals = calculateInvoiceTotals(
-    activeItemsToBill.map((item) => ({
-      quantity: item.billingQty,
-      unit_price: item.billingPrice,
-      discount: 0,
-      taxable_amount: item.subtotal,
-      cgst: item.taxBreakdown.cgst,
-      sgst: item.taxBreakdown.sgst,
-      igst: item.taxBreakdown.igst
-    })),
+    billableLines.map((line) => {
+      const tax = calculateTax(
+        line.lineSubtotal,
+        businessSettings.default_gst_rate,
+        businessSettings.state_code,
+        customer ? getCustomerStateCode(customer) : '24'
+      );
+      return {
+        quantity: line.billQty,
+        unit_price: line.rate,
+        discount: 0,
+        taxable_amount: line.lineSubtotal,
+        cgst: tax.cgst,
+        sgst: tax.sgst,
+        igst: tax.igst
+      };
+    }),
     otherCharges
   );
 
   const handleGenerateInvoice = (openPreview = false) => {
     if (isCreating) return; // double-submit guard: one number per click
     setCreationError('');
-    if (activeItemsToBill.length === 0) {
-      setCreationError('Please allocate at least one unbilled movement quantity.');
+    if (unpriced.length > 0) {
+      setCreationError(
+        t('billing.errMissingPrice', { products: unpriced.map((l) => l.productName).join(', ') })
+      );
+      return;
+    }
+    if (billableLines.length === 0) {
+      setCreationError(t('billing.errNothingBillable'));
       return;
     }
     setIsCreating(true);
-
-    // Group items by productId for the invoice items table
-    // and attach explicit movement allocations!
-    // Mapped products: invoice line in KG (converted), allocations in PCS.
-    const productGroups: Record<
-      string,
-      {
-        productId: string;
-        unitId: string;
-        quantity: number;
-        unitPrice: number;
-        allocations: Array<{ movementId: string; allocatedQuantity: number }>;
-      }
-    > = {};
-
-    for (const item of activeItemsToBill) {
-      const basis = billBasisFor(item.movement);
-      if (basis.isPiece && !(basis.price > 0)) {
-        setIsCreating(false);
-        setCreationError(t('billing.errNoKgPrice', { product: item.movement.productName }));
-        return;
-      }
-      const pId = item.movement.productId;
-      if (!productGroups[pId]) {
-        productGroups[pId] = {
-          productId: pId,
-          unitId: item.billingUnitId,
-          quantity: 0,
-          unitPrice: item.billingPrice,
-          allocations: []
-        };
-      }
-      productGroups[pId].quantity = roundCurrency(productGroups[pId].quantity + item.billingQty);
-      productGroups[pId].allocations.push({
-        movementId: item.movement.movementId,
-        allocatedQuantity: item.quantityToBill
-      });
-    }
-
-    const itemsForStore = Object.values(productGroups).map((g) => ({
-      productId: g.productId,
-      unitId: g.unitId,
-      quantity: g.quantity,
-      unitPrice: g.unitPrice,
-      discount: 0,
-      movementAllocations: g.allocations
-    }));
-
-    const result = createInvoice({
+    const result = createInvoiceFromPeriod({
       customerId: effectiveCustomerId,
-      billingPeriodStart,
-      billingPeriodEnd,
-      items: itemsForStore,
+      periodStart: billingPeriodStart,
+      periodEnd: billingPeriodEnd,
       otherCharges: Number(otherCharges) || 0,
       notes: billingNotes,
       status: isFinalizeImmediately ? 'FINALIZED' : 'DRAFT',
@@ -250,6 +121,28 @@ export const BillingView: React.FC<BillingViewProps> = ({
   const previewFy = getFyForDate(new Date(`${invoiceDate}T12:00:00`).toISOString());
   const previewSeries = Object.values(invoiceSeries).find((s) => s.fy === previewFy);
   const previewNext = previewSeries ? previewSeries.next_number : businessSettings.invoice_start_number;
+
+  // Challan breakdown rows (brought-forward group first, then period challans).
+  const challanRows = netting.lines.flatMap((line) => [
+    ...line.broughtForwardChallans.map((c) => ({ ...c, productName: line.productName, broughtForward: true })),
+    ...line.challans.map((c) => ({ ...c, productName: line.productName, broughtForward: false }))
+  ]).sort((a, b) => a.date.localeCompare(b.date));
+  // Every movement of the SAME challan shares one visual row: the Date /
+  // Challan No. / Type cells span the challan's product rows, so the table
+  // reads as "in this challan these products moved" instead of repeating
+  // the header info on every line.
+  type ChallanRow = (typeof challanRows)[number];
+  const challanGroups: Array<{ key: string; rows: ChallanRow[] }> = [];
+  for (const row of challanRows) {
+    const key = `${row.challanRef}|${row.kind}`;
+    const lastGroup = challanGroups[challanGroups.length - 1];
+    if (lastGroup && lastGroup.key === key) {
+      lastGroup.rows.push(row);
+    } else {
+      challanGroups.push({ key, rows: [row] });
+    }
+  }
+  const hasExcluded = netting.excluded.length > 0;
 
   return (
     <div className="space-y-6">
@@ -301,7 +194,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
             />
           </div>
           <div className="text-[11px] text-muted-foreground mt-1">
-            {t('billing.periodPrinted')}
+            {t('billing.periodNetsHint')}
           </div>
         </div>
 
@@ -360,147 +253,150 @@ export const BillingView: React.FC<BillingViewProps> = ({
         </Alert>
       )}
 
-      {/* Billable Consignment Movements Allocation Table */}
+      {/* Period challans: deliveries minus returns, challan by challan */}
       <TableShell>
-        <CardHeader>
-          <div>
-            <div className="font-bold text-foreground uppercase tracking-wide text-[11px]">
-              {t('billing.movementsTitle', { count: billableMovements.length })}
-            </div>
-            <div className="text-muted-foreground text-[11px] mt-0.5">
-              {t('billing.movementsSub')}
-            </div>
+        <div className="p-4 pb-0">
+          <div className="font-bold text-foreground uppercase tracking-wide text-[11px]">
+            {t('billing.netTitle', { count: netting.lines.length })}
           </div>
-        </CardHeader>
-
-        <div className="overflow-x-auto">
+          <div className="text-muted-foreground text-[11px] mt-0.5">
+            {t('billing.netSub')}
+          </div>
+        </div>
+        <div className="overflow-x-auto mt-3">
           <Table className="text-left border-collapse">
-            <caption className="sr-only">{t('billing.movementsCaption')}</caption>
+            <caption className="sr-only">{t('billing.netCaption')}</caption>
             <THead>
               <TR className="hover:bg-transparent">
-                <TH scope="col">{t('billing.thDispatch')}</TH>
+                <TH scope="col">{t('billing.thChallan')}</TH>
+                <TH scope="col">{t('billing.thDate')}</TH>
+                <TH scope="col">{t('billing.thType')}</TH>
                 <TH scope="col">{t('billing.thProduct')}</TH>
-                <TH scope="col" className="text-right">{t('billing.thDispatched')}</TH>
-                <TH scope="col" className="text-right">{t('billing.thBilled')}</TH>
-                <TH scope="col" className="text-right">{t('billing.thAvailable')}</TH>
-                <TH scope="col" className="text-right">{t('billing.thPrice')}</TH>
-                <TH scope="col" className="text-right px-4 bg-muted/70">{t('billing.thAllocate')}</TH>
-                <TH scope="col" className="text-right px-4">{t('billing.thLineTotal')}</TH>
+                <TH scope="col" className="text-right">{t('billing.thQty')}</TH>
               </TR>
             </THead>
             <TBody>
-              {billableMovements.length === 0 ? (
+              {challanRows.length === 0 ? (
                 <tr>
-                  <TD colSpan={8} className="py-8 text-center text-muted-foreground">
-                    {t('billing.noMovements')}
+                  <TD colSpan={5} className="py-8 text-center text-muted-foreground">
+                    {t('billing.noChallans', { start: billingPeriodStart, end: billingPeriodEnd })}
                   </TD>
                 </tr>
               ) : (
-                billableMovements.map((mov) => {
-                  const currentAlloc = selectedAllocations[mov.movementId] || 0;
-                  const basis = billBasisFor(mov);
-                  const currentBillingQty = toBillingQty(mov, basis, currentAlloc);
-                  const lineSubtotal = roundCurrency(currentBillingQty * basis.price);
+                challanGroups.map((g) => {
+                  const head = g.rows[0];
+                  return (
+                    <Fragment key={head.movementId}>
+                      <TR>
+                        <TD rowSpan={g.rows.length} className="font-mono text-[11px] font-semibold align-top">
+                          {head.challanRef}
+                          {head.broughtForward && (
+                            <span className="block text-[10px] font-normal text-muted-foreground">
+                              {t('billing.broughtForwardTag')}
+                            </span>
+                          )}
+                        </TD>
+                        <TD rowSpan={g.rows.length} className="font-mono text-[11px] text-muted-foreground align-top">
+                          {new Date(head.date).toLocaleDateString()}
+                        </TD>
+                        <TD rowSpan={g.rows.length} className="align-top">
+                          <Badge variant={head.kind === 'RETURN' ? 'warning' : 'success'} size="sm">
+                            {head.kind === 'RETURN' ? t('billing.kindReturn') : t('billing.kindDelivery')}
+                          </Badge>
+                        </TD>
+                        <TD>
+                          <div className="font-semibold">{head.productName}</div>
+                        </TD>
+                        <TD className="text-right font-mono font-bold">
+                          {head.kind === 'RETURN' ? '− ' : ''}{head.quantity} {head.unitCode}
+                        </TD>
+                      </TR>
+                      {g.rows.slice(1).map((r) => (
+                        <TR key={r.movementId}>
+                          <TD>
+                            <div className="font-semibold">{r.productName}</div>
+                          </TD>
+                          <TD className="text-right font-mono font-bold">
+                            {r.kind === 'RETURN' ? '− ' : ''}{r.quantity} {r.unitCode}
+                          </TD>
+                        </TR>
+                      ))}
+                    </Fragment>
+                  );
+                })
+              )}
+            </TBody>
+          </Table>
+        </div>
+      </TableShell>
+
+      {/* Net summary — what the invoice will bill */}
+      <TableShell>
+        <div className="p-4 pb-0">
+          <div className="font-bold text-foreground uppercase tracking-wide text-[11px]">
+            {t('billing.netSummaryTitle')}
+          </div>
+          <div className="text-muted-foreground text-[11px] mt-0.5">
+            {t('billing.netSummarySub')}
+          </div>
+        </div>
+        <div className="overflow-x-auto mt-3">
+          <Table className="text-left border-collapse">
+            <caption className="sr-only">{t('billing.netSummaryCaption')}</caption>
+            <THead>
+              <TR className="hover:bg-transparent">
+                <TH scope="col">{t('billing.thProduct')}</TH>
+                <TH scope="col" className="text-right">{t('billing.thDelivered')}</TH>
+                <TH scope="col" className="text-right">{t('billing.thReturned')}</TH>
+                <TH scope="col" className="text-right">{t('billing.thBF')}</TH>
+                <TH scope="col" className="text-right">{t('billing.thNet')}</TH>
+                <TH scope="col" className="text-right">{t('billing.thPrice')}</TH>
+                <TH scope="col" className="text-right px-4 bg-muted/70">{t('billing.thLineTotal')}</TH>
+              </TR>
+            </THead>
+            <TBody>
+              {netting.lines.length === 0 ? (
+                <tr>
+                  <TD colSpan={7} className="py-8 text-center text-muted-foreground">
+                    {t('billing.noChallans', { start: billingPeriodStart, end: billingPeriodEnd })}
+                  </TD>
+                </tr>
+              ) : (
+                netting.lines.map((line) => {
                   const tax = calculateTax(
-                    lineSubtotal,
+                    line.lineSubtotal,
                     businessSettings.default_gst_rate,
                     businessSettings.state_code,
                     customer ? getCustomerStateCode(customer) : '24'
                   );
-                  const lineTotal = roundCurrency(lineSubtotal + tax.totalTax);
-                  const availBillingQty = toBillingQty(mov, basis, mov.availableBillableQuantity);
-                  const billedBillingQty = toBillingQty(mov, basis, mov.allocatedQuantity);
-                  const dispatchedBillingQty = toBillingQty(mov, basis, mov.dispatchedQuantity);
-
+                  const lineTotal = roundCurrency(line.lineSubtotal + tax.totalTax);
+                  const billed = line.billQty > 0;
                   return (
-                    <TR key={mov.movementId}>
-                      <TD className="font-mono text-[11px]">
-                        <div className="font-semibold">{t('billing.challanRef', { ref: mov.referenceId })}</div>
-                        <div className="text-muted-foreground">
-                          {new Date(mov.movementDate).toLocaleDateString()} • #{mov.movementId}
-                        </div>
-                      </TD>
-
+                    <TR key={line.productId} className={billed ? '' : 'opacity-50'}>
                       <TD>
-                        <div className="font-semibold">{mov.productName}</div>
-                        <div className="text-[11px] font-mono text-muted-foreground">{mov.sku}</div>
+                        <div className="font-semibold">{line.productName}</div>
+                        <div className="text-[11px] font-mono text-muted-foreground">{line.sku}</div>
                       </TD>
-
-                      <TD className="text-right font-mono">
-                        {mov.dispatchedQuantity} {mov.unitCode}
-                        {basis.isPiece && (
-                          <span className="block text-[10px] text-muted-foreground">
-                            {t('billing.pieceDualQty', { pcs: mov.dispatchedQuantity, kg: dispatchedBillingQty })}
-                          </span>
-                        )}
+                      <TD className="text-right font-mono">{line.deliveredQty} {line.billingUnitCode}</TD>
+                      <TD className="text-right font-mono text-amber-800 dark:text-amber-300">− {line.returnedQty} {line.billingUnitCode}</TD>
+                      <TD className={`text-right font-mono ${line.broughtForwardQty < 0 ? 'text-amber-800 dark:text-amber-300' : 'text-muted-foreground'}`}>
+                        {line.broughtForwardQty !== 0 ? `${line.broughtForwardQty < 0 ? '− ' : '+ '}${Math.abs(line.broughtForwardQty)} ${line.billingUnitCode}` : '—'}
                       </TD>
-
-                      <TD className="text-right font-mono text-muted-foreground">
-                        {mov.allocatedQuantity} {mov.unitCode}
-                        {basis.isPiece && (
-                          <span className="block text-[10px]">
-                            {t('billing.pieceDualQty', { pcs: mov.allocatedQuantity, kg: billedBillingQty })}
-                          </span>
-                        )}
-                      </TD>
-
-                      <TD className="text-right font-mono font-bold">
-                        {mov.availableBillableQuantity} {mov.unitCode}
-                        {basis.isPiece && (
+                      <TD className={`text-right font-mono font-bold ${billed ? 'text-foreground' : 'text-muted-foreground'}`}>
+                        {line.billQty} {line.billingUnitCode}
+                        {!billed && (
                           <span className="block text-[10px] font-normal text-muted-foreground">
-                            {t('billing.pieceDualQty', { pcs: mov.availableBillableQuantity, kg: availBillingQty })}
+                            {t('billing.carriesForward')}
                           </span>
                         )}
                       </TD>
-
                       <TD className="text-right font-mono">
-                        {formatINR(basis.price)}
-                        {basis.isPiece && (
-                          <span className="block text-[9px] text-muted-foreground">
-                            {t('billing.priceUnitSuffix', { unit: basis.unitCode })}
-                          </span>
-                        )}
-                        <span className={`block text-[9px] font-bold ${basis.isCustom ? 'text-emerald-700 dark:text-emerald-300' : 'text-muted-foreground'}`}>
-                          {basis.isCustom ? t('billing.agreedRate') : t('billing.baseRate')}
+                        {formatINR(line.rate)}
+                        <span className={`block text-[9px] font-bold ${line.isCustomRate ? 'text-emerald-700 dark:text-emerald-300' : 'text-muted-foreground'}`}>
+                          {line.isCustomRate ? t('billing.agreedRate') : t('billing.baseRate')}
                         </span>
                       </TD>
-
-                      {/* Allocator Input (movement units — PCS for mapped products) */}
-                      <TD className="text-right bg-muted/40">
-                        <div className="flex items-center justify-end gap-1.5">
-                          <Input
-                            type="number"
-                            min="0"
-                            max={mov.availableBillableQuantity}
-                            step="any"
-                            value={currentAlloc}
-                            onChange={(e) =>
-                              handleQuantityChange(
-                                mov.movementId,
-                                mov.availableBillableQuantity,
-                                Number(e.target.value)
-                              )
-                            }
-                            className="w-24 text-right font-mono font-semibold"
-                          />
-                          <span className="text-[11px] font-mono text-muted-foreground">{mov.unitCode}</span>
-                        </div>
-                        {basis.isPiece && currentAlloc > 0 && (
-                          <div className="text-[10px] font-mono text-emerald-700 dark:text-emerald-300 mt-0.5">
-                            {t('billing.pieceDualQty', { pcs: currentAlloc, kg: currentBillingQty })}
-                          </div>
-                        )}
-                        {currentAlloc < mov.availableBillableQuantity && (
-                          <div className="text-[10px] font-mono text-amber-700 dark:text-amber-300 mt-0.5">
-                            {t('billing.remainingAfter', { qty: roundCurrency(mov.availableBillableQuantity - currentAlloc) })}
-                            {basis.isPiece && (
-                              <> {t('billing.remainingKg', { kg: roundCurrency(availBillingQty - currentBillingQty) })}</>
-                            )}
-                          </div>
-                        )}
-                      </TD>
-
-                      <TD className="text-right font-mono font-bold">
+                      <TD className="text-right font-mono font-bold bg-muted/40 px-4">
                         {formatINR(lineTotal)}
                       </TD>
                     </TR>
@@ -510,6 +406,16 @@ export const BillingView: React.FC<BillingViewProps> = ({
             </TBody>
           </Table>
         </div>
+        {hasExcluded && (
+          <div className="p-4 pt-3">
+            <Alert tone="neutral">
+              <span className="text-[11px]">
+                {t('billing.excludedNote', { count: netting.excluded.length })}{' '}
+                {netting.excluded.map((x) => `#${x.challanRef} (${x.billedOnInvoiceNumber})`).join(', ')}
+              </span>
+            </Alert>
+          </div>
+        )}
       </TableShell>
 
       {/* Invoice Totals & Finalization Section */}
@@ -567,7 +473,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
             </div>
           )}
 
-          <div className="flex justify-between items-center py-1 border-b border-border">
+          <div className="flex justify-between py-1 border-b border-border">
             <span className="text-muted-foreground">{t('billing.freight')}</span>
             <Input
               type="number"
@@ -583,10 +489,18 @@ export const BillingView: React.FC<BillingViewProps> = ({
             <span className="font-mono">{formatINR(estimatedTotals.grandTotal)}</span>
           </div>
 
+          {unpriced.length > 0 && (
+            <Alert tone="destructive">
+              <span className="text-[11px]">
+                {t('billing.errMissingPrice', { products: unpriced.map((l) => l.productName).join(', ') })}
+              </span>
+            </Alert>
+          )}
+
           <div className="flex gap-2">
             <Button
               onClick={() => handleGenerateInvoice(false)}
-              disabled={activeItemsToBill.length === 0 || isCreating}
+              disabled={billableLines.length === 0 || unpriced.length > 0 || isCreating}
               variant="primary"
               size="md"
               className="flex-1 py-2.5 shadow-2xs"
@@ -596,7 +510,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
             </Button>
             <Button
               onClick={() => handleGenerateInvoice(true)}
-              disabled={activeItemsToBill.length === 0 || isCreating}
+              disabled={billableLines.length === 0 || unpriced.length > 0 || isCreating}
               variant="secondary"
               size="md"
               className="py-2.5 px-3 shadow-2xs"

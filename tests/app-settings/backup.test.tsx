@@ -96,6 +96,6 @@ describe('App Settings restore with override', () => {
     render(<AppSettingsView />);
     fireEvent.click(screen.getByText(/replace all current data/));
     fireEvent.click(screen.getByText('Restore from Backup…'));
-    expect(await screen.findByText(/not a valid AccuLedger backup/)).toBeDefined();
+    expect(await screen.findByText(/not a valid Maruti Infotech backup/)).toBeDefined();
   });
 });

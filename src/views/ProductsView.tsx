@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useAccountingStore } from '../store/accountingStore';
 import { Product } from '../types/database';
-import { formatINR, toPcsDisplayQty, kolkataCalendarDay } from '../utils/calculations';
+import { formatINR, toPcsDisplayQty, kolkataCalendarDay, formatBoxPcs } from '../utils/calculations';
 import {
   Plus,
   Search,
@@ -24,8 +24,10 @@ export const ProductsView: React.FC = () => {
     createProduct,
     updateProduct,
     createProductPrice,
+    getProductEffectivePrice,
     getCurrentCompanyStock,
     getPieceWeightMapping,
+    getBoxMapping,
     savePieceWeightMapping,
     removePieceWeightMapping,
     customerInventoryMovements,
@@ -45,7 +47,8 @@ export const ProductsView: React.FC = () => {
     description: '',
     primary_unit_id: 'uom-pcs',
     initial_price: 100,
-    grams_per_piece: ''
+    grams_per_piece: '',
+    pcs_per_box: ''
   });
   const [createError, setCreateError] = useState('');
 
@@ -83,6 +86,19 @@ export const ProductsView: React.FC = () => {
     (uoms[newProduct.primary_unit_id]?.code || '').toUpperCase()
   );
 
+  // Box packing preview for the create modal: valid only for PCS-primary with a
+  // whole number ≥ 2. The PCS price shown derives from the BOX price entered.
+  const boxPcsForCreate =
+    newProduct.primary_unit_id === 'uom-pcs' &&
+    newProduct.pcs_per_box.trim() !== '' &&
+    Number.isInteger(Number(newProduct.pcs_per_box)) &&
+    Number(newProduct.pcs_per_box) >= 2
+      ? Number(newProduct.pcs_per_box)
+      : null;
+  const derivedPcsPrice = boxPcsForCreate
+    ? formatINR((Number(newProduct.initial_price) || 0) / boxPcsForCreate)
+    : '';
+
   const handleOpenCreate = () => {
     setNewProduct({
       product_name: '',
@@ -91,7 +107,8 @@ export const ProductsView: React.FC = () => {
       description: '',
       primary_unit_id: 'uom-pcs',
       initial_price: 100,
-      grams_per_piece: ''
+      grams_per_piece: '',
+      pcs_per_box: ''
     });
     setCreateError('');
     setIsCreateModalOpen(true);
@@ -110,6 +127,17 @@ export const ProductsView: React.FC = () => {
       setCreateError(t('products.errPieceInvalid'));
       return;
     }
+    // Box packing: optional whole number ≥ 2, PCS-primary products only.
+    const boxRaw = newProduct.pcs_per_box.trim();
+    const pcsPerBox = boxRaw === '' ? undefined : Number(boxRaw);
+    if (boxRaw !== '' && (!Number.isInteger(pcsPerBox) || (pcsPerBox ?? 0) < 2)) {
+      setCreateError(t('products.errBoxInvalid'));
+      return;
+    }
+    if (boxRaw !== '' && newProduct.primary_unit_id !== 'uom-pcs') {
+      setCreateError(t('products.errBoxNeedsPcs'));
+      return;
+    }
     // Validate mapping feasibility BEFORE creating (a failed mapping save must
     // never leave a half-configured duplicate behind on resubmit).
     if (gramsRaw !== '' && !isNewWeightPrimary) {
@@ -126,7 +154,8 @@ export const ProductsView: React.FC = () => {
         primary_unit_id: newProduct.primary_unit_id,
         is_active: true
       },
-      Number(newProduct.initial_price) || 0
+      Number(newProduct.initial_price) || 0,
+      pcsPerBox
     );
 
     // GRAM-primary + grams entered → create the PCS mapping together.
@@ -142,8 +171,10 @@ export const ProductsView: React.FC = () => {
   };
 
   const handleOpenPriceModal = (prod: Product) => {
+    // Box-packed products price per BOX (the anchor) — default the unit to it.
+    const box = getBoxMapping(prod.id);
     setNewPriceForm({
-      unit_id: prod.primary_unit_id,
+      unit_id: box ? box.boxUnitId : prod.primary_unit_id,
       price: 0,
       effective_from: kolkataCalendarDay(new Date())
     });
@@ -325,10 +356,9 @@ export const ProductsView: React.FC = () => {
             <TBody>
               {filteredProducts.map((prod) => {
                 const primaryUom = uoms[prod.primary_unit_id];
-                const activePrice =
-                  Object.values(productPrices).find(
-                    (pp) => pp.product_id === prod.id && pp.unit_id === prod.primary_unit_id && !pp.effective_to
-                  )?.price || 0;
+                // Box-packed products anchor the price per BOX — the resolver
+                // derives the PCS equivalent (₹100/box of 10 → ₹10/PC).
+                const activePrice = getProductEffectivePrice(prod.id, prod.primary_unit_id);
                 const stock = getCurrentCompanyStock(prod.id);
                 // Piece-mapped products lead with PCS (weight as reference).
                 const listMapping = getPieceWeightMapping(prod.id);
@@ -451,6 +481,17 @@ export const ProductsView: React.FC = () => {
                   {(() => {
                     if (!selectedProduct) return null;
                     const stock = getCurrentCompanyStock(selectedProduct.id);
+                    const box = getBoxMapping(selectedProduct.id);
+                    if (box) {
+                      return (
+                        <>
+                          {formatBoxPcs(stock, box.pcsPerBox)}{' '}
+                          <span className="text-xs font-normal text-muted-foreground">
+                            (≈ {stock.toLocaleString()} {uoms[selectedProduct.primary_unit_id]?.code})
+                          </span>
+                        </>
+                      );
+                    }
                     const mapping = getPieceWeightMapping(selectedProduct.id);
                     if (!mapping) {
                       return (
@@ -768,7 +809,9 @@ export const ProductsView: React.FC = () => {
             </div>
 
             <div>
-              <Label className="mb-1">{t('products.fPrice')}</Label>
+              <Label className="mb-1">
+                {boxPcsForCreate ? t('products.fPricePerBox') : t('products.fPrice')}
+              </Label>
               <Input
                 type="number"
                 step="0.01"
@@ -777,7 +820,26 @@ export const ProductsView: React.FC = () => {
                 onChange={(e) => setNewProduct({ ...newProduct, initial_price: Number(e.target.value) })}
                 className="w-full font-mono"
               />
+              {boxPcsForCreate && (
+                <p className="text-[10px] text-muted-foreground mt-0.5">{t('products.pricePerBoxHint', { pcs: boxPcsForCreate, price: derivedPcsPrice })}</p>
+              )}
             </div>
+
+            {newProduct.primary_unit_id === 'uom-pcs' && (
+              <div>
+                <Label className="mb-1">{t('products.fPcsPerBox')}</Label>
+                <Input
+                  type="number"
+                  min={2}
+                  step="1"
+                  value={newProduct.pcs_per_box}
+                  onChange={(e) => setNewProduct({ ...newProduct, pcs_per_box: e.target.value })}
+                  className="w-full font-mono"
+                  placeholder={t('products.fPcsPerBoxPh')}
+                />
+                <p className="text-[10px] text-muted-foreground mt-0.5">{t('products.fPcsPerBoxHint')}</p>
+              </div>
+            )}
 
             {isNewWeightPrimary ? (
               <div className="col-span-2">

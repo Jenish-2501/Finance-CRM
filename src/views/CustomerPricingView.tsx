@@ -19,7 +19,9 @@ export const CustomerPricingView: React.FC = () => {
     getProductEffectivePrice,
     getCustomerPriceHistory,
     setCustomerPrice,
-    clearCustomerPrice
+    clearCustomerPrice,
+    getBoxMapping,
+    resolvePriceForCustomer
   } = useAccountingStore();
 
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('cust-1');
@@ -43,11 +45,14 @@ export const CustomerPricingView: React.FC = () => {
       unitCode: string;
       basePrice: number;
       agreedPrice: number | null;
+      /** Box-packed PCS row: price derives from the BOX price — read-only. */
+      derived: boolean;
     }> = [];
     for (const prod of Object.values(products).filter((p) => p.is_active)) {
       const billingUnits = Object.values(productUnits).filter(
         (pu) => pu.product_id === prod.id && pu.is_billing_unit
       );
+      const box = getBoxMapping(prod.id);
       for (const pu of billingUnits) {
         const agreed = Object.values(customerPrices).find(
           (cp) =>
@@ -55,6 +60,7 @@ export const CustomerPricingView: React.FC = () => {
             cp.product_id === prod.id &&
             cp.unit_id === pu.unit_id
         );
+        const isDerivedPcs = Boolean(box && pu.unit_id === box.pcsUnitId);
         list.push({
           key: `${prod.id}__${pu.unit_id}`,
           productId: prod.id,
@@ -63,7 +69,17 @@ export const CustomerPricingView: React.FC = () => {
           unitId: pu.unit_id,
           unitCode: uoms[pu.unit_id]?.code || 'PCS',
           basePrice: getProductEffectivePrice(prod.id, pu.unit_id),
-          agreedPrice: agreed ? agreed.price : null
+          // Derived PCS rows surface what billing will actually charge: the
+          // BOX resolution (override if agreed, base otherwise) ÷ pcs-per-box.
+          agreedPrice: isDerivedPcs
+            ? (() => {
+                const r = resolvePriceForCustomer(prod.id, pu.unit_id, effectiveCustomerId);
+                return r.isCustom ? r.price : null;
+              })()
+            : agreed
+              ? agreed.price
+              : null,
+          derived: isDerivedPcs
         });
       }
     }
@@ -177,26 +193,37 @@ export const CustomerPricingView: React.FC = () => {
                       <TD className="font-mono">{row.unitCode}</TD>
                       <TD className="text-right font-mono">{formatINR(row.basePrice)}</TD>
                       <TD>
-                        <Input
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          value={draft}
-                          onChange={(e) => setDrafts((prev) => ({ ...prev, [row.key]: e.target.value }))}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault();
-                              handleSave(row);
-                            }
-                          }}
-                          placeholder={row.basePrice ? String(row.basePrice) : t('pricing.basePh')}
-                          className="w-28 font-mono text-right ml-auto block"
-                        />
-                        {msg && (
-                          <div className={`text-[10px] mt-1 text-right flex items-center justify-end gap-1 ${msg.kind === 'success' ? 'text-emerald-700 dark:text-emerald-300' : 'text-destructive'}`}>
-                            {msg.kind === 'success' ? <CheckCircle2 className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}
-                            <span>{msg.text}</span>
+                        {row.derived ? (
+                          <div className="text-right">
+                            <span className="font-mono text-muted-foreground">
+                              {row.agreedPrice !== null ? formatINR(row.agreedPrice) : '—'}
+                            </span>
+                            <span className="block text-[10px] text-muted-foreground">{t('pricing.derivedPcsHint')}</span>
                           </div>
+                        ) : (
+                          <>
+                            <Input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={draft}
+                              onChange={(e) => setDrafts((prev) => ({ ...prev, [row.key]: e.target.value }))}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  handleSave(row);
+                                }
+                              }}
+                              placeholder={row.basePrice ? String(row.basePrice) : t('pricing.basePh')}
+                              className="w-28 font-mono text-right ml-auto block"
+                            />
+                            {msg && (
+                              <div className={`text-[10px] mt-1 text-right flex items-center justify-end gap-1 ${msg.kind === 'success' ? 'text-emerald-700 dark:text-emerald-300' : 'text-destructive'}`}>
+                                {msg.kind === 'success' ? <CheckCircle2 className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}
+                                <span>{msg.text}</span>
+                              </div>
+                            )}
+                          </>
                         )}
                       </TD>
                       <TD className="text-right font-mono text-[11px]">
@@ -215,10 +242,14 @@ export const CustomerPricingView: React.FC = () => {
                         </Badge>
                       </TD>
                       <TD className="text-right">
-                        <Button variant="primary" size="sm" onClick={() => handleSave(row)} className="text-[11px] px-2.5 py-1">
-                          <Save className="w-3 h-3" />
-                          <span>{t('pricing.save')}</span>
-                        </Button>
+                        {row.derived ? (
+                          <span className="text-[10px] text-muted-foreground">—</span>
+                        ) : (
+                          <Button variant="primary" size="sm" onClick={() => handleSave(row)} className="text-[11px] px-2.5 py-1">
+                            <Save className="w-3 h-3" />
+                            <span>{t('pricing.save')}</span>
+                          </Button>
+                        )}
                       </TD>
                     </TR>
                   );

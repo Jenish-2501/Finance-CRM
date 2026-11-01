@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAccountingStore } from '../store/accountingStore';
-import { getMovementBillingStatus, roundCurrency, convertQuantity, toDisplayWeight, formatINR } from '../utils/calculations';
+import { getMovementBillingStatus, roundCurrency, convertQuantity, toDisplayWeight, formatINR, formatBoxPcs } from '../utils/calculations';
 import {
   Truck,
   RotateCcw,
@@ -72,12 +72,12 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
     invoiceAllocations,
     dispatchBatchInventoryToCustomer,
     returnBatchFromCustomer,
-    getCustomerDeliveredRates,
     getCustomerProductInventory,
     suggestNextDocumentNumber,
     getCustomerInventorySummary,
     getCurrentCompanyStock,
-    getPieceWeightMapping
+    getPieceWeightMapping,
+    getBoxMapping
   } = useAccountingStore();
 
   const [activeTab, setActiveTab] = useState<'holdings' | 'movements'>('holdings');
@@ -114,23 +114,18 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
     ]
   });
 
-  // Return Form State — multi-item, mirroring the dispatch form. Each line
-  // tracks the product (restricted to what the customer holds) and the
-  // taken-back rate: either a previously delivered price (dropdown) or a
-  // custom on-the-spot entry.
+  // Return Form State — multi-item, mirroring the dispatch form. Returns are
+  // QUANTITY-ONLY: no rate, no rupee credit — the return reduces the next
+  // period's bill through challan netting (Billing view).
   interface ReturnLine {
     productId: string;
     unitId: string;
     quantity: number;
-    rateChoice: string; // numeric string of a delivered rate, or 'custom'
-    customRate: string; // raw custom-entry input value
   }
   const emptyReturnLine = (): ReturnLine => ({
     productId: '',
     unitId: 'uom-pcs',
-    quantity: 1,
-    rateChoice: '',
-    customRate: ''
+    quantity: 1
   });
   const [returnForm, setReturnForm] = useState<{
     customerId: string;
@@ -153,10 +148,38 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
   // Piece-weight entry: mapped products (GRAM primary + PCS mapping) are ALWAYS
   // entered in PCS — the counter never types weight. Weight derives via
   // convertQuantity; the store validates stock in primary units either way.
+  //
+  // Box-packed products default to BOX entry (matches how the goods move);
+  // a per-line dropdown lets the user switch the line to loose PCS.
   const entryUnitFor = (productId: string): string => {
     const p = products[productId];
     if (!p) return 'uom-pcs';
+    const box = getBoxMapping(productId);
+    if (box) return box.boxUnitId;
     return getPieceWeightMapping(productId)?.pcsUnitId ?? p.primary_unit_id;
+  };
+
+  // Box conversion preview for a challan line, or null: BOX entry shows the
+  // PCS total, PCS entry shows the BOX+PCS split.
+  const boxPreviewFor = (productId: string, quantity: number, unitId: string): string | null => {
+    if (!Number.isFinite(quantity) || quantity <= 0) return null;
+    const box = getBoxMapping(productId);
+    if (!box) return null;
+    const pus = Object.values(productUnits).filter((pu) => pu.product_id === productId);
+    if (unitId === box.boxUnitId) {
+      const pcs = convertQuantity(quantity, box.boxUnitId, box.pcsUnitId, pus);
+      return `= ${roundCurrency(pcs).toLocaleString()} PCS`;
+    }
+    return `= ${formatBoxPcs(quantity, box.pcsPerBox)}`;
+  };
+
+  // Submit-unit guard: box-packed lines accept the user's BOX/PCS choice from
+  // the form; every other product snaps to the canonical entry unit (protects
+  // against stale persisted form state).
+  const unitForSubmit = (productId: string, formUnitId: string): string => {
+    const box = getBoxMapping(productId);
+    if (box && (formUnitId === box.boxUnitId || formUnitId === box.pcsUnitId)) return formUnitId;
+    return entryUnitFor(productId);
   };
 
   // Derived weight preview for a mapped product line, or null.
@@ -403,14 +426,6 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
   const returnHeldProducts = heldProductsFor(effectiveReturnCustomerId);
   const hasAnyHeldProducts = returnHeldProducts.length > 0;
 
-  // Total return credit across all open lines (rate × quantity per line).
-  const totalReturnCredit = roundCurrency(
-    returnForm.items.reduce((sum, it) => {
-      const r = it.rateChoice === 'custom' ? Number(it.customRate) : Number(it.rateChoice);
-      return Number.isFinite(r) && r > 0 ? sum + r * Number(it.quantity) : sum;
-    }, 0)
-  );
-
   const allCustomerMovements = Object.values(customerInventoryMovements)
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
@@ -484,30 +499,44 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
     const line = emptyReturnLine();
     line.productId = firstHeldProductFor(customerId);
     line.unitId = line.productId ? entryUnitFor(line.productId) : 'uom-pcs';
-    line.rateChoice = line.productId
-      ? defaultRateChoiceFor(customerId, line.productId)
-      : '';
     return line;
-  };
-
-  // Default rate choice = the last (highest) previously delivered rate; ''
-  // when nothing was ever delivered/priced, forcing custom entry.
-  const defaultRateChoiceFor = (customerId: string, productId: string): string => {
-    const rates = getCustomerDeliveredRates(customerId, productId);
-    return rates.length > 0 ? String(rates[rates.length - 1]) : '';
   };
 
   const handleAddReturnItem = () => {
     setReturnForm({ ...returnForm, items: [...returnForm.items, emptyReturnLine()] });
   };
 
-  // Products already picked in one challan line disappear from every other
-  // line's dropdown (own row keeps its selection). Uniqueness is therefore
-  // enforced by the option lists themselves.
-  const dispatchTakenIds = new Set(dispatchForm.items.map((it) => it.productId));
-  const canAddDispatchItem = allProducts.some((p) => !dispatchTakenIds.has(p.id));
-  const returnTakenIds = new Set(returnForm.items.map((it) => it.productId));
-  const canAddReturnItem = returnHeldProducts.some((h) => !returnTakenIds.has(h.productId));
+  // One line per product AND unit: box-packed products may appear twice in a
+  // challan (once as BOX, once as loose PCS) but never twice in the same unit;
+  // other products keep one line each. Uniqueness is enforced by the option
+  // lists plus disabled unit toggles.
+  const lineKey = (productId: string, unitId: string) => `${productId}__${unitId}`;
+  const unitTakenInOtherLine = (
+    items: Array<{ productId: string; unitId: string }>,
+    idx: number,
+    productId: string,
+    unitId: string
+  ): boolean =>
+    items.some((it, i) => i !== idx && it.productId === productId && it.unitId === unitId);
+  const productHasFreeUnit = (
+    takenKeys: Set<string>,
+    productId: string
+  ): boolean => {
+    const box = getBoxMapping(productId);
+    if (!box) return !takenKeys.has(lineKey(productId, entryUnitFor(productId)));
+    // Selectable while at least one of its challan units (BOX / loose PCS)
+    // is not claimed by another line.
+    return [box.boxUnitId, box.pcsUnitId].some((u) => !takenKeys.has(lineKey(productId, u)));
+  };
+
+  const dispatchTakenKeys = new Set(
+    dispatchForm.items.map((it) => lineKey(it.productId, it.unitId))
+  );
+  const canAddDispatchItem = allProducts.some((p) => productHasFreeUnit(dispatchTakenKeys, p.id));
+  const returnTakenKeys = new Set(
+    returnForm.items.map((it) => lineKey(it.productId, it.unitId))
+  );
+  const canAddReturnItem = returnHeldProducts.some((h) => productHasFreeUnit(returnTakenKeys, h.productId));
 
   const handleRemoveReturnItem = (index: number) => {
     if (returnForm.items.length <= 1) return;
@@ -528,8 +557,9 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
       referenceId: dispatchForm.referenceId.trim(),
       items: dispatchForm.items.map((it) => ({
         productId: it.productId,
-        // Mapped products always move in PCS, regardless of stale form state.
-        unitId: entryUnitFor(it.productId),
+        // Box-packed lines trust the form's unit (the BOX/PCS dropdown);
+        // everything else snaps to the canonical entry unit.
+        unitId: unitForSubmit(it.productId, it.unitId),
         quantity: Number(it.quantity)
       }))
     });
@@ -559,9 +589,8 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
       referenceId: returnForm.referenceId.trim(),
       items: returnForm.items.map((it) => ({
         productId: it.productId,
-        unitId: entryUnitFor(it.productId),
-        quantity: Number(it.quantity),
-        rate: it.rateChoice === 'custom' ? Number(it.customRate) : Number(it.rateChoice)
+        unitId: unitForSubmit(it.productId, it.unitId),
+        quantity: Number(it.quantity)
       }))
     });
 
@@ -1047,15 +1076,29 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
                 const availableStock = selectedProd ? getCurrentCompanyStock(selectedProd.id) : 0;
                 const prodUom = selectedProd ? uoms[selectedProd.primary_unit_id] : null;
                 const lineMapping = getPieceWeightMapping(item.productId);
-                const entryUomCode = lineMapping
-                  ? uoms[lineMapping.pcsUnitId]?.code
-                  : prodUom?.code;
+                const box = getBoxMapping(item.productId);
+                const entryUomCode = box
+                  ? uoms[item.unitId === box.pcsUnitId ? box.pcsUnitId : box.boxUnitId]?.code
+                  : lineMapping
+                    ? uoms[lineMapping.pcsUnitId]?.code
+                    : prodUom?.code;
                 const piece = piecePreviewFor(item.productId, Number(item.quantity));
+                // Sibling lines of the same product (BOX + loose PCS on one
+                // challan) draw from the same warehouse balance — subtract them
+                // so the availability shown is what THIS line can still take.
+                const otherSameProductPrimary = dispatchForm.items
+                  .filter((it, i) => i !== idx && it.productId === item.productId && selectedProd)
+                  .reduce((sum, it) => {
+                    const pus = Object.values(productUnits).filter((pu) => pu.product_id === item.productId);
+                    return sum + convertQuantity(Number(it.quantity) || 0, it.unitId, selectedProd!.primary_unit_id, pus);
+                  }, 0);
+                const lineAvailable = roundCurrency(availableStock - otherSameProductPrimary);
                 const stockPcsEquiv = (() => {
                   if (!lineMapping || !selectedProd) return null;
                   const pus = Object.values(productUnits).filter((pu) => pu.product_id === item.productId);
-                  return convertQuantity(availableStock, selectedProd.primary_unit_id, lineMapping.pcsUnitId, pus);
+                  return convertQuantity(lineAvailable, selectedProd.primary_unit_id, lineMapping.pcsUnitId, pus);
                 })();
+                const boxStockEquiv = box ? formatBoxPcs(lineAvailable, box.pcsPerBox) : null;
 
                 return (
                   <div
@@ -1070,18 +1113,29 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
                         value={item.productId}
                         onChange={(e) => {
                           const newProdId = e.target.value;
+                          // Default the line's unit to the product's canonical
+                          // entry unit — but when another line already claims
+                          // that unit for the same product, take the free one.
+                          let unitId = entryUnitFor(newProdId);
+                          const box = getBoxMapping(newProdId);
+                          if (
+                            box &&
+                            unitTakenInOtherLine(dispatchForm.items, idx, newProdId, unitId)
+                          ) {
+                            unitId = unitId === box.boxUnitId ? box.pcsUnitId : box.boxUnitId;
+                          }
                           const newItems = [...dispatchForm.items];
                           newItems[idx] = {
                             ...newItems[idx],
                             productId: newProdId,
-                            unitId: entryUnitFor(newProdId)
+                            unitId
                           };
                           setDispatchForm({ ...dispatchForm, items: newItems });
                         }}
                         className="w-full text-xs"
                       >
                         {allProducts
-                          .filter((p) => p.id === item.productId || !dispatchTakenIds.has(p.id))
+                          .filter((p) => p.id === item.productId || productHasFreeUnit(dispatchTakenKeys, p.id))
                           .map((p) => {
                             const stock = getCurrentCompanyStock(p.id);
                             const gu = p.gujarati_name?.trim();
@@ -1094,13 +1148,18 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
                       </Select>
                       <div className="text-[10px] font-mono text-muted-foreground mt-0.5">
                         {t('customerInventory.warehouseAvail')}{' '}
-                        {stockPcsEquiv !== null ? (
+                        {boxStockEquiv ? (
                           <>
-                            <span className="font-bold text-foreground">{stockPcsEquiv} PCS</span>{' '}
-                            <span>(≈ {availableStock} {prodUom?.code})</span>
+                            <span className={`font-bold ${lineAvailable < 0 ? 'text-destructive' : 'text-foreground'}`}>{boxStockEquiv}</span>{' '}
+                            <span>(≈ {lineAvailable} PCS)</span>
+                          </>
+                        ) : stockPcsEquiv !== null ? (
+                          <>
+                            <span className={`font-bold ${lineAvailable < 0 ? 'text-destructive' : 'text-foreground'}`}>{stockPcsEquiv} PCS</span>{' '}
+                            <span>(≈ {lineAvailable} {prodUom?.code})</span>
                           </>
                         ) : (
-                          <span className="font-bold text-foreground">{availableStock} {prodUom?.code}</span>
+                          <span className={`font-bold ${lineAvailable < 0 ? 'text-destructive' : 'text-foreground'}`}>{lineAvailable} {prodUom?.code}</span>
                         )}
                       </div>
                     </div>
@@ -1109,6 +1168,37 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
                       <label className="block text-[10px] font-mono text-muted-foreground mb-0.5">
                         {t('customerInventory.qtyLabel', { uom: entryUomCode ?? '' })}
                       </label>
+                      {box && (
+                        <div className="flex items-center gap-1 mb-1">
+                          {([box.boxUnitId, box.pcsUnitId] as const).map((u) => {
+                            const active = item.unitId === u;
+                            // The same product's OTHER line may already use this
+                            // unit — one line per product+unit in a challan.
+                            const taken = unitTakenInOtherLine(dispatchForm.items, idx, item.productId, u);
+                            return (
+                              <button
+                                key={u}
+                                type="button"
+                                disabled={taken}
+                                title={taken ? t('customerInventory.unitTakenOther') : undefined}
+                                onClick={() => {
+                                  if (taken) return;
+                                  const newItems = [...dispatchForm.items];
+                                  newItems[idx] = { ...newItems[idx], unitId: u };
+                                  setDispatchForm({ ...dispatchForm, items: newItems });
+                                }}
+                                className={`px-1.5 py-0.5 text-[10px] font-mono border rounded disabled:opacity-40 disabled:cursor-not-allowed ${
+                                  active
+                                    ? 'border-primary bg-primary text-primary-foreground font-semibold'
+                                    : 'border-input bg-card text-muted-foreground'
+                                }`}
+                              >
+                                {u === box.boxUnitId ? 'BOX' : 'PCS'}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
                       <Input
                         type="number"
                         min="1"
@@ -1124,6 +1214,17 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
                         }}
                         className="w-full font-mono font-bold text-sm"
                       />
+                      {(() => {
+                        const bp = boxPreviewFor(item.productId, Number(item.quantity), item.unitId);
+                        if (bp) {
+                          return (
+                            <div className="text-[11px] font-mono font-semibold text-emerald-800 dark:text-emerald-300 mt-0.5">
+                              {bp}
+                            </div>
+                          );
+                        }
+                        return null;
+                      })()}
                       {piece && (
                         <div className="text-[11px] font-mono font-semibold text-emerald-800 dark:text-emerald-300 mt-0.5">
                           {t('customerInventory.pieceWeightPreview', { pcs: Number(item.quantity), grams: piece.grams, kg: piece.kg })}
@@ -1173,9 +1274,9 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
       </Modal>
 
       {/* Return Modal — multi-item mirror of the dispatch modal. Products are
-          limited to what the customer still holds (billed or not); the rate
-          defaults to a previously delivered price (dropdown) with a custom
-          on-the-spot entry. rate × quantity becomes the return credit. */}
+          limited to what the customer still holds (billed or not). Quantity
+          only: no rate, no credit — the return reduces the next period's
+          bill through challan netting. */}
       <Modal
         isOpen={isReturnModalOpen}
         onClose={() => setIsReturnModalOpen(false)}
@@ -1241,25 +1342,28 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
                   : 0;
                 const prodUom = selectedProd ? uoms[selectedProd.primary_unit_id] : null;
                 const lineMapping = getPieceWeightMapping(item.productId);
-                const entryUomCode = lineMapping
-                  ? uoms[lineMapping.pcsUnitId]?.code
-                  : prodUom?.code;
+                const box = getBoxMapping(item.productId);
+                const entryUomCode = box
+                  ? uoms[item.unitId === box.pcsUnitId ? box.pcsUnitId : box.boxUnitId]?.code
+                  : lineMapping
+                    ? uoms[lineMapping.pcsUnitId]?.code
+                    : prodUom?.code;
                 // Held quantity expressed in the line's entry unit (PCS for
                 // piece-mapped products), mirroring the dispatch stock preview.
+                // Sibling lines of the same product (BOX + loose PCS) return
+                // from the same holding — subtract them from this line's view.
+                const otherHeldPrimary = returnForm.items
+                  .filter((it, i) => i !== idx && it.productId === item.productId && selectedProd)
+                  .reduce((sum, it) => {
+                    const pus = Object.values(productUnits).filter((pu) => pu.product_id === item.productId);
+                    return sum + convertQuantity(Number(it.quantity) || 0, it.unitId, selectedProd!.primary_unit_id, pus);
+                  }, 0);
+                const lineHeld = roundCurrency(heldPrimary - otherHeldPrimary);
                 const heldEntry = (() => {
                   if (!selectedProd) return 0;
                   const pus = Object.values(productUnits).filter((pu) => pu.product_id === item.productId);
-                  return convertQuantity(heldPrimary, selectedProd.primary_unit_id, entryUnitFor(item.productId), pus);
+                  return convertQuantity(lineHeld, selectedProd.primary_unit_id, unitForSubmit(item.productId, item.unitId), pus);
                 })();
-                const deliveredRates = item.productId
-                  ? getCustomerDeliveredRates(effectiveReturnCustomerId, item.productId)
-                  : [];
-                const effectiveRate = item.rateChoice === 'custom'
-                  ? Number(item.customRate)
-                  : Number(item.rateChoice);
-                const lineCredit = Number.isFinite(effectiveRate) && effectiveRate > 0
-                  ? roundCurrency(effectiveRate * Number(item.quantity))
-                  : 0;
                 const piece = piecePreviewFor(item.productId, Number(item.quantity));
 
                 return (
@@ -1267,7 +1371,7 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
                     key={idx}
                     className="p-3 bg-card border border-border rounded-md grid grid-cols-12 gap-2 items-start"
                   >
-                    <div className="col-span-12 sm:col-span-5">
+                    <div className="col-span-12 sm:col-span-6">
                       <label className="block text-[10px] font-mono text-muted-foreground mb-0.5">
                         {t('customerInventory.itemLabel', { n: idx + 1 })}
                       </label>
@@ -1275,13 +1379,22 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
                         value={item.productId}
                         onChange={(e) => {
                           const newProdId = e.target.value;
+                          // Default unit = canonical entry unit; when another
+                          // line already claims it for the same product, take
+                          // the free one (box-packed lines only).
+                          let unitId = entryUnitFor(newProdId);
+                          const box = getBoxMapping(newProdId);
+                          if (
+                            box &&
+                            unitTakenInOtherLine(returnForm.items, idx, newProdId, unitId)
+                          ) {
+                            unitId = unitId === box.boxUnitId ? box.pcsUnitId : box.boxUnitId;
+                          }
                           const newItems = [...returnForm.items];
                           newItems[idx] = {
                             ...newItems[idx],
                             productId: newProdId,
-                            unitId: entryUnitFor(newProdId),
-                            rateChoice: defaultRateChoiceFor(effectiveReturnCustomerId, newProdId),
-                            customRate: ''
+                            unitId
                           };
                           setReturnForm({ ...returnForm, items: newItems });
                         }}
@@ -1291,7 +1404,7 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
                           {t('customerInventory.retProductPh')}
                         </option>
                         {returnHeldProducts
-                          .filter((h) => h.productId === item.productId || !returnTakenIds.has(h.productId))
+                          .filter((h) => h.productId === item.productId || productHasFreeUnit(returnTakenKeys, h.productId))
                           .map((h) => {
                             const gu = products[h.productId]?.gujarati_name?.trim();
                             return (
@@ -1303,14 +1416,48 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
                       </Select>
                       <div className="text-[10px] font-mono text-muted-foreground mt-0.5">
                         {t('customerInventory.customerHolds')}{' '}
-                        <span className="font-bold text-foreground">{heldEntry} {entryUomCode ?? ''}</span>
+                        <span className={`font-bold ${lineHeld < 0 ? 'text-destructive' : 'text-foreground'}`}>{heldEntry} {entryUomCode ?? ''}</span>
                       </div>
                     </div>
 
-                    <div className="col-span-6 sm:col-span-3">
+                    <div className="col-span-12 sm:col-span-5">
                       <label className="block text-[10px] font-mono text-muted-foreground mb-0.5">
                         {t('customerInventory.qtyLabel', { uom: entryUomCode ?? '' })}
                       </label>
+                      {box && (
+                        <div className="flex items-center gap-1 mb-1">
+                          {([box.boxUnitId, box.pcsUnitId] as const).map((u) => {
+                            const active = item.unitId === u;
+                            // One line per product+unit: the sibling line may
+                            // already hold this unit for the same product.
+                            const taken = unitTakenInOtherLine(returnForm.items, idx, item.productId, u);
+                            return (
+                              <button
+                                key={u}
+                                type="button"
+                                disabled={taken}
+                                title={taken ? t('customerInventory.unitTakenOther') : undefined}
+                                onClick={() => {
+                                  if (taken) return;
+                                  const newItems = [...returnForm.items];
+                                  newItems[idx] = {
+                                    ...newItems[idx],
+                                    unitId: u
+                                  };
+                                  setReturnForm({ ...returnForm, items: newItems });
+                                }}
+                                className={`px-1.5 py-0.5 text-[10px] font-mono border rounded disabled:opacity-40 disabled:cursor-not-allowed ${
+                                  active
+                                    ? 'border-primary bg-primary text-primary-foreground font-semibold'
+                                    : 'border-input bg-card text-muted-foreground'
+                                }`}
+                              >
+                                {u === box.boxUnitId ? 'BOX' : 'PCS'}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
                       <Input
                         type="number"
                         min="1"
@@ -1326,52 +1473,20 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
                         }}
                         className="w-full font-mono font-bold text-sm"
                       />
+                      {(() => {
+                        const bp = boxPreviewFor(item.productId, Number(item.quantity), item.unitId);
+                        if (bp) {
+                          return (
+                            <div className="text-[11px] font-mono font-semibold text-emerald-800 dark:text-emerald-300 mt-0.5">
+                              {bp}
+                            </div>
+                          );
+                        }
+                        return null;
+                      })()}
                       {piece && (
                         <div className="text-[11px] font-mono font-semibold text-emerald-800 dark:text-emerald-300 mt-0.5">
                           {t('customerInventory.pieceWeightPreview', { pcs: Number(item.quantity), grams: piece.grams, kg: piece.kg })}
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="col-span-6 sm:col-span-3">
-                      <label className="block text-[10px] font-mono text-muted-foreground mb-0.5">
-                        {t('customerInventory.rateLabel')}
-                      </label>
-                      <Select
-                        value={item.rateChoice}
-                        onChange={(e) => {
-                          const newItems = [...returnForm.items];
-                          newItems[idx] = { ...newItems[idx], rateChoice: e.target.value };
-                          setReturnForm({ ...returnForm, items: newItems });
-                        }}
-                        className="w-full text-xs"
-                      >
-                        {deliveredRates.map((r) => (
-                          <option key={r} value={String(r)}>
-                            {formatINR(r)}
-                          </option>
-                        ))}
-                        <option value="custom">{t('customerInventory.rateCustom')}</option>
-                      </Select>
-                      {item.rateChoice === 'custom' && (
-                        <Input
-                          type="number"
-                          min="0"
-                          step="any"
-                          required
-                          value={item.customRate}
-                          onChange={(e) => {
-                            const newItems = [...returnForm.items];
-                            newItems[idx] = { ...newItems[idx], customRate: e.target.value };
-                            setReturnForm({ ...returnForm, items: newItems });
-                          }}
-                          placeholder={t('customerInventory.rateCustomPh')}
-                          className="w-full font-mono text-xs mt-1"
-                        />
-                      )}
-                      {lineCredit > 0 && (
-                        <div className="text-[11px] font-mono font-semibold text-amber-800 dark:text-amber-300 mt-0.5">
-                          {t('customerInventory.lineCredit', { value: formatINR(lineCredit) })}
                         </div>
                       )}
                     </div>
@@ -1405,9 +1520,6 @@ export const CustomerInventoryView: React.FC<CustomerInventoryViewProps> = ({
             </span>
 
             <div className="flex items-center gap-3">
-              <span className="text-[11px] font-mono font-bold text-amber-800 dark:text-amber-300">
-                {t('customerInventory.totalCredit', { value: formatINR(totalReturnCredit) })}
-              </span>
               <Button type="button" variant="secondary" size="sm" onClick={() => setIsReturnModalOpen(false)}>
                 {t('common.cancel')}
               </Button>

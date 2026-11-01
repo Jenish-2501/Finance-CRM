@@ -10,7 +10,6 @@ import { BillingView } from '../../src/views/BillingView';
 import { CustomerPricingView } from '../../src/views/CustomerPricingView';
 import { InvoicesView } from '../../src/views/InvoicesView';
 import { PaymentsView } from '../../src/views/PaymentsView';
-import { CustomerLedgerView } from '../../src/views/CustomerLedgerView';
 import { CustomersView } from '../../src/views/CustomersView';
 import { ProductsView } from '../../src/views/ProductsView';
 import { CompanyInventoryView } from '../../src/views/CompanyInventoryView';
@@ -32,7 +31,7 @@ describe('view import surface', () => {
   it('all views load', () => {
     for (const view of [
       DashboardView, BillingView, CustomerPricingView, InvoicesView, PaymentsView,
-      CustomerLedgerView, CustomersView, ProductsView, CompanyInventoryView,
+      CustomersView, ProductsView, CompanyInventoryView,
       CustomerInventoryView, ReportsView, SettingsView, AuditActivityView,
       AppSettingsView, LoginView,
     ]) {

@@ -1,8 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Invoice, InvoiceItem, InvoicePayment, InvoiceCustomerInventoryAllocation } from '../../types/database';
 import { useAccountingStore } from '../../store/accountingStore';
-import { roundCurrency, toDisplayWeight } from '../../utils/calculations';
-import { buildInvoicePdf, docToBase64 } from '../../utils/pdfDocuments';
+import { buildInvoiceModeDoc, invoiceDocFilename, docToBase64, InvoiceDocMode } from '../../utils/invoiceDocs';
 import type jsPDF from 'jspdf';
 import { Printer, X, CheckCircle, Download } from 'lucide-react';
 import { Badge } from '../common/Badge';
@@ -15,6 +14,9 @@ interface InvoicePrintViewProps {
   items: InvoiceItem[];
   payments: InvoicePayment[];
   allocations: InvoiceCustomerInventoryAllocation[];
+  /** Which document the preview shows: the tax invoice, the challan ledger,
+      or BOTH merged into one document. Defaults to the invoice. */
+  mode?: InvoiceDocMode;
   onClose?: () => void;
   onFinalize?: () => void;
   onCancel?: (reason: string) => void;
@@ -26,6 +28,7 @@ export const InvoicePrintView: React.FC<InvoicePrintViewProps> = ({
   items,
   payments,
   allocations,
+  mode = 'invoice',
   onClose,
   onFinalize,
   onCancel,
@@ -33,80 +36,23 @@ export const InvoicePrintView: React.FC<InvoicePrintViewProps> = ({
 }) => {
   const { t } = useT();
   const { customerInventoryMovements, uoms, getPieceWeightMapping, businessSettings, customers } = useAccountingStore();
-  // Gujarati nickname under the legal name: frozen snapshot first, live
-  // master record as fallback for invoices billed before it was captured.
-  const customerGuName =
-    invoice.customer_snapshot.gujarati_name?.trim() ||
-    customers[invoice.customer_id]?.gujarati_name?.trim() ||
-    '';
   const activePayments = payments.filter((p) => p.status === 'ACTIVE');
   const totalPaid = activePayments.reduce((sum, p) => sum + p.amount, 0);
   const outstanding = invoice.status === 'CANCELLED' ? 0 : Math.max(0, invoice.grand_total - totalPaid);
 
-  // Piece-mapped lines (KG/GRAM invoice line, PCS allocations): total PCS per
-  // invoice item for the "(≈ N PCS)" reference inside the Qty column.
-  // Only PCS-unit allocations count — a GRAM allocation behind a KG line is
-  // weight, not pieces, and must never wear the PCS label.
-  const pcsByItem = useMemo(() => {
-    const out: Record<string, number> = {};
-    for (const item of items) {
-      let pcs = 0;
-      for (const a of allocations) {
-        const mov = customerInventoryMovements[a.customer_inventory_movement_id];
-        if (!mov || mov.product_id !== item.product_id) continue;
-        if (uoms[mov.unit_id]?.code !== 'PCS') continue;
-        pcs = roundCurrency(pcs + a.allocated_quantity);
-      }
-      if (pcs > 0) out[item.id] = pcs;
-    }
-    return out;
-  }, [items, allocations, customerInventoryMovements, uoms]);
-
-  // Allocation audit lines grouped by challan (not raw movement ids):
-  // "Challan #CH-501: 4 PCS (= 1 KG)". Shared by the preview and the PDF.
-  const allocChallanLines = useMemo(() => {
-    const groups = new Map<string, { ref: string; qty: number; unitCode: string; grams: number | null }>();
-    for (const a of allocations) {
-      const mov = customerInventoryMovements[a.customer_inventory_movement_id];
-      if (!mov) continue;
-      const unitCode = uoms[mov.unit_id]?.code || '';
-      const key = `${mov.reference_id}::${mov.unit_id}`;
-      const g = groups.get(key) || { ref: mov.reference_id, qty: 0, unitCode, grams: null as number | null };
-      g.qty = roundCurrency(g.qty + a.allocated_quantity);
-      const mapping = getPieceWeightMapping(mov.product_id);
-      if (mapping && mov.unit_id === mapping.pcsUnitId) {
-        g.grams = roundCurrency((g.grams ?? 0) + a.allocated_quantity * mapping.gramsPerPiece);
-      }
-      groups.set(key, g);
-    }
-    return [...groups.values()].map((g) => {
-      const base = `Challan #${g.ref}: ${g.qty}${g.unitCode ? ` ${g.unitCode}` : ''}`;
-      if (g.grams === null) return base;
-      const w = toDisplayWeight(g.grams);
-      return `${base} (= ${w.qty} ${w.unit})`;
-    });
-  }, [allocations, customerInventoryMovements, uoms, getPieceWeightMapping]);
-
   // The ONE document object behind preview, download and print — they cannot
-  // drift apart because they are literally the same bytes.
+  // drift apart because they are literally the same bytes. InvoicePrintView
+  // (modal preview) and the Invoices table's direct actions share this builder.
+  // Reactive slices stay in the dependency list so zustand updates re-render
+  // and rebuild the document.
   const doc: jsPDF = useMemo(
-    () => buildInvoicePdf({
-      invoice,
-      items,
-      payments,
-      allocations,
-      pcsRef: pcsByItem,
-      allocationLines: allocChallanLines,
-      logoDataUrl: businessSettings.logo_data ?? undefined,
-      customerGujaratiName: customerGuName || undefined
-    }),
-    [invoice, items, payments, allocations, pcsByItem, allocChallanLines, businessSettings, customerGuName]
+    () => buildInvoiceModeDoc(invoice, items, payments, allocations, mode, useAccountingStore.getState()),
+    [invoice, items, payments, allocations, mode, customerInventoryMovements, uoms, getPieceWeightMapping, businessSettings, customers]
   );
 
   const [downloading, setDownloading] = useState(false);
   const handleDownloadPDF = async () => {
-    const safeNumber = invoice.invoice_number.replace(/[^a-z0-9-_]+/gi, '-');
-    const filename = `Invoice-${safeNumber}.pdf`;
+    const filename = invoiceDocFilename(invoice, mode);
     // Web fallback: direct jsPDF download. Electron: save dialog to chosen folder.
     if (!window.electronAPI?.files?.savePDFBytes) {
       doc.save(filename);
@@ -195,13 +141,13 @@ export const InvoicePrintView: React.FC<InvoicePrintViewProps> = ({
         </div>
       </Toolbar>
 
-      {/* Printable Invoice — the EXACT jsPDF output that Download saves and
+      {/* Printable document — the EXACT jsPDF output that Download saves and
           the printer receives. One source of truth: the on-screen preview,
           the saved file and the paper are the same bytes, so they can never
           drift apart. */}
       <PdfPreview
         doc={doc}
-        ariaLabel={`Tax invoice ${invoice.invoice_number}`}
+        ariaLabel={mode === 'ledger' ? `Challan ledger ${invoice.invoice_number}` : `Tax invoice ${invoice.invoice_number}`}
       />
     </div>
   );

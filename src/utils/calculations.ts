@@ -388,6 +388,24 @@ export function toDisplayWeight(totalGrams: number): { qty: number; unit: 'KG' |
 }
 
 /**
+ * "N BOX + M PCS" display for box-packed products. Stock math stays in PCS
+ * (primary) — this splits a primary-unit total into whole boxes plus loose
+ * pieces for display only. Negative stock renders with a leading minus on the
+ * whole result ("−2 BOX + 3 PCS"); fractions of a piece round to 2 decimals.
+ */
+export function formatBoxPcs(pcsQty: number, pcsPerBox: number): string {
+  if (!Number.isFinite(pcsQty) || !Number.isFinite(pcsPerBox) || pcsPerBox < 2) return '';
+  const sign = pcsQty < 0 ? '-' : '';
+  const abs = Math.abs(pcsQty);
+  const boxes = Math.floor(abs / pcsPerBox);
+  const loose = roundCurrency(abs - boxes * pcsPerBox);
+  const parts: string[] = [];
+  if (boxes > 0) parts.push(`${boxes} BOX`);
+  if (loose > 0 || parts.length === 0) parts.push(`${loose} PCS`);
+  return sign + parts.join(' + ');
+}
+
+/**
  * Next free plain document number ("1", "2", … — no prefix, no FY link).
  * Only all-digit numbers participate in the scan (legacy codes like "CH-501"
  * stay valid but never shift the plain sequence); the stored floor keeps

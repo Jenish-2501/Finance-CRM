@@ -136,6 +136,17 @@ describe('challan PDF — Gujarati booklet layout', () => {
     expect(text).not.toContain('DELIVERY CHALLAN');
   });
 
+  it('signs every return line and the totals with a leading minus', () => {
+    const text = textOf(buildChallanPdf(input({ direction: 'return' })));
+    // Default rows: 2 PCS (0.5 KG) + 5 PCS. Anyone holding the paper sees at
+    // a glance that these goods came BACK — every number leads with '-'.
+    expect(text).toContain('-2');
+    expect(text).toContain('-5');
+    expect(text).toContain('-0.5');
+    // The totals row carries the same sign (Σ Pcs = 7, Σ Weight = 0.5 KG).
+    expect(text).toContain('-7');
+  });
+
   it('shows the customer address in the info box, business address nowhere', () => {
     const text = textOf(buildChallanPdf(input()));
     expect(text).toContain('Santlal'); // customer street address in the info box

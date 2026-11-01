@@ -26,7 +26,7 @@ export const AppSettingsView: React.FC = () => {
         kind: 'error',
         text: isElectronShell()
           ? 'Desktop shell failed to load its database bridge. Fully quit and relaunch the app.'
-          : 'Restore needs the desktop app — open AccuLedger in Electron, not the browser preview.',
+          : 'Restore needs the desktop app — open Maruti Infotech in Electron, not the browser preview.',
       });
       return;
     }
@@ -42,7 +42,7 @@ export const AppSettingsView: React.FC = () => {
     } catch {
       setRestoreStatus({
         kind: 'error',
-        text: 'Desktop app is out of date. Please fully quit and restart AccuLedger, then try again.',
+        text: 'Desktop app is out of date. Please fully quit and restart Maruti Infotech, then try again.',
       });
     } finally {
       setRestoring(false);
@@ -60,7 +60,7 @@ export const AppSettingsView: React.FC = () => {
         kind: 'error',
         text: isElectronShell()
           ? 'Desktop shell failed to load its database bridge. Fully quit and relaunch the app.'
-          : 'Backups need the desktop app — open AccuLedger in Electron, not the browser preview.',
+          : 'Backups need the desktop app — open Maruti Infotech in Electron, not the browser preview.',
       });
       return;
     }
@@ -82,7 +82,7 @@ export const AppSettingsView: React.FC = () => {
     } catch {
       setStatus({
         kind: 'error',
-        text: 'Desktop app is out of date. Please fully quit and restart AccuLedger, then try again.',
+        text: 'Desktop app is out of date. Please fully quit and restart Maruti Infotech, then try again.',
       });
     } finally {
       setBusy(false);

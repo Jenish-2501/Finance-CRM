@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+﻿import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
 import { createJSONStorage, StateStorage } from 'zustand/middleware';
@@ -10,7 +10,7 @@ function persistDiff(payload: Record<string, unknown[]>) {
   try {
     window.electronAPI?.store.persistChanges(payload)?.catch(() => {});
   } catch {
-    // IPC unavailable — memory state remains the source of truth.
+    // IPC unavailable â€” memory state remains the source of truth.
   }
 }
 
@@ -104,6 +104,8 @@ import {
   suggestCustomerNumber,
   suggestNextPlainNumber
 } from '../utils/calculations';
+import { previewPeriodNetting as computePeriodNetting } from '../utils/periodNetting';
+import type { PeriodNetting } from '../utils/periodNetting';
 
 export interface LedgerEntry {
   date: string;
@@ -172,6 +174,9 @@ interface AccountingState {
   getCustomerProductInventory: (customerId: string, productId: string) => number;
   getCustomerInventorySummary: (customerId: string) => CustomerProductSummary[];
   getBillableMovementsForCustomer: (customerId: string) => BillableMovementItem[];
+  /** Period netting preview: challans in/out for the window, per-product nets
+      and the lines that would bill (see utils/periodNetting.ts). */
+  previewPeriodNetting: (customerId: string, periodStart: string, periodEnd: string) => PeriodNetting;
   getInvoiceOutstanding: (invoiceId: string) => { totalPaid: number; outstanding: number };
   getCustomerOutstanding: (customerId: string) => number;
   getCustomerLedger: (customerId: string) => LedgerEntry[];
@@ -203,12 +208,20 @@ interface AccountingState {
 
   createProduct: (
     productData: Omit<Product, 'id' | 'created_at' | 'updated_at'>,
-    initialPrice: number
+    initialPrice: number,
+    // Optional box packing (e.g. 10 = 1 BOX contains 10 PCS). When set (PCS-primary
+    // products only), a BOX unit (factor = pcsPerBox) is attached and the initial
+    // price is anchored per BOX â€” the PCS price derives from it everywhere.
+    pcsPerBox?: number
   ) => Product;
   updateProduct: (id: string, data: Partial<Product>) => void;
   configureProductUnit: (data: Omit<ProductUnit, 'id' | 'created_at' | 'updated_at'>) => ProductUnit;
+  // Box packing ("buy in BOX, sell in BOX or PCS"). Returns the PCS-per-box factor
+  // and the two unit ids for PCS-primary products with a BOX row attached, else null.
+  // Price anchoring keys off this: BOX price is set, PCS price = BOX Ã· factor.
+  getBoxMapping: (productId: string) => { pcsPerBox: number; pcsUnitId: string; boxUnitId: string } | null;
   // Piece-weight mapping ("enter PCS, weight comes automatically"). Ensures the
-  // PCS row (grams per piece, in primary units) and — for GRAM-primary products —
+  // PCS row (grams per piece, in primary units) and â€” for GRAM-primary products â€”
   // the KG row (1000). Billing (Phase 3) and challan entry (Phase 2) key off
   // getPieceWeightMapping.
   getPieceWeightMapping: (productId: string) => { gramsPerPiece: number; pcsUnitId: string; kgUnitId: string } | null;
@@ -258,10 +271,10 @@ interface AccountingState {
   suggestNextDocumentNumber: (customerId: string, documentType: 'DISPATCH' | 'RETURN') => string;
 
   // Multi-item customer return (mirror of the batch dispatch). Every line
-  // carries the taken-back unit rate — rate × quantity becomes the customer's
+  // carries the taken-back unit rate â€” rate Ã— quantity becomes the customer's
   // return credit, spendable against their next invoice (manual apply).
   // Returns are allowed against billed or unbilled stock alike; the only cap
-  // is what the customer still holds (delivered − already returned).
+  // is what the customer still holds (delivered âˆ’ already returned).
   returnBatchFromCustomer: (params: {
     customerId: string;
     referenceId: string;
@@ -275,13 +288,13 @@ interface AccountingState {
     }>;
   }) => { success: boolean; movementIds?: string[]; referenceId?: string; error?: string };
 
-  /** Customer's unspent return credit: Σ(rate × quantity − applied) over RETURN movements. */
+  /** Customer's unspent return credit: Î£(rate Ã— quantity âˆ’ applied) over RETURN movements. */
   getCustomerReturnCredit: (customerId: string) => number;
 
   /** Distinct rates at which this customer+product moved (delivered prices for
       the return-rate dropdown): past invoice unit prices, then the current
       agreed override, then the product default. Ascending, deduplicated. */
-  getCustomerDeliveredRates: (customerId: string, productId: string) => number[];
+  getCustomerDeliveredRates: (customerId: string, productId: string, unitId?: string) => number[];
 
   /** Manual credit apply: consumes the customer's return credit (oldest
       returns first, partial consumption allowed) and records an InvoicePayment
@@ -291,7 +304,7 @@ interface AccountingState {
     amount: number;
   }) => { success: boolean; paymentId?: string; error?: string };
 
-  // Legacy single-product return — delegates to returnBatchFromCustomer.
+  // Legacy single-product return â€” delegates to returnBatchFromCustomer.
   createCustomerReturn: (params: {
     customerId: string;
     productId: string;
@@ -338,6 +351,23 @@ interface AccountingState {
   finalizeInvoice: (invoiceId: string) => { success: boolean; error?: string };
   cancelInvoice: (invoiceId: string, reason: string) => { success: boolean; error?: string };
 
+  /** Challan-based period billing (the client's net-quantity model): nets
+      every delivery and return challan in the window (plus unattached
+      pre-period leftovers as brought-forward) per product, and generates the
+      invoice on the NET quantity. Allocations link the invoice to BOTH the
+      delivery and the return movements so the per-invoice challan ledger can
+      be reproduced forever. Refuses when nothing is billable or a price is
+      missing. */
+  createInvoiceFromPeriod: (params: {
+    customerId: string;
+    periodStart: string;
+    periodEnd: string;
+    otherCharges?: number;
+    notes?: string;
+    status?: InvoiceStatus;
+    invoiceDate?: string;
+  }) => { success: boolean; invoiceId?: string; error?: string };
+
   // Payments Actions
   createInvoicePayment: (params: {
     invoiceId: string;
@@ -346,8 +376,8 @@ interface AccountingState {
     referenceNumber: string;
     notes: string;
     paymentDate?: string;
-    /** Return credit consumed alongside the cash (credit + cash ≤ outstanding,
-        credit ≤ the customer's unspent balance; 0/omitted = cash only). */
+    /** Return credit consumed alongside the cash (credit + cash â‰¤ outstanding,
+        credit â‰¤ the customer's unspent balance; 0/omitted = cash only). */
     returnCredit?: number;
   }) => { success: boolean; paymentId?: string; error?: string };
 
@@ -368,7 +398,7 @@ interface AccountingState {
 // Resolve a dispatch-document number for (customer, type): a provided reference
 // wins when free, otherwise the next free plain number is assigned. The shared
 // counter only ever moves forward, so sequences from both families stay tight.
-// Pure over its inputs — the caller persists the advanced floor.
+// Pure over its inputs â€” the caller persists the advanced floor.
 function claimDocumentNumber(
   headers: DispatchDocument[],
   customerId: string,
@@ -597,9 +627,47 @@ export const useAccountingStore = create<AccountingState>()(
         return result;
       },
 
+      /** Period netting over the store's own slices (see utils/periodNetting.ts). */
+      previewPeriodNetting: (customerId, periodStart, periodEnd) => {
+        const {
+          products,
+          uoms,
+          productUnits,
+          customerInventoryMovements,
+          invoiceAllocations,
+          invoices,
+          getPieceWeightMapping,
+          getBoxMapping,
+          resolvePriceForCustomer
+        } = get();
+        return computePeriodNetting({
+          customerId,
+          periodStart,
+          periodEnd,
+          products,
+          uoms,
+          productUnits,
+          customerInventoryMovements,
+          invoiceAllocations,
+          invoices,
+          getPieceWeightMapping,
+          getBoxMapping,
+          resolvePriceForCustomer: (pid, uid, cid) => resolvePriceForCustomer(pid, uid, cid)
+        });
+      },
+
       getProductEffectivePrice: (productId: string, unitId: string, asOfDate?: string) => {
         const { productPrices } = get();
         const targetDate = asOfDate ? new Date(asOfDate).getTime() : Date.now();
+
+        // Box-packed products price per BOX (the anchor); the PCS price is never
+        // stored â€” it always derives from the BOX price Ã· pcs-per-box, so the two
+        // can never drift apart (e.g. â‚¹100/box of 10 â†’ â‚¹10/pc).
+        const box = get().getBoxMapping(productId);
+        if (box && unitId === box.pcsUnitId) {
+          const boxPrice = get().getProductEffectivePrice(productId, box.boxUnitId, asOfDate);
+          return roundCurrency(boxPrice / box.pcsPerBox);
+        }
 
         const prices = Object.values(productPrices).filter(
           (pp) => pp.product_id === productId && pp.unit_id === unitId
@@ -760,7 +828,7 @@ export const useAccountingStore = create<AccountingState>()(
         } catch {
           return {
             ok: false,
-            error: 'Desktop app is out of date. Please fully quit and restart AccuLedger, then try again.'
+            error: 'Desktop app is out of date. Please fully quit and restart Maruti Infotech, then try again.'
           };
         }
       },
@@ -787,7 +855,7 @@ export const useAccountingStore = create<AccountingState>()(
             set({ uoms: map });
           }
         } catch {
-          // Stale shell — memory state remains the source of truth.
+          // Stale shell â€” memory state remains the source of truth.
         }
       },
 
@@ -814,7 +882,7 @@ export const useAccountingStore = create<AccountingState>()(
         } catch {
           return {
             ok: false,
-            error: 'Desktop app is out of date. Please fully quit and restart AccuLedger, then try again.'
+            error: 'Desktop app is out of date. Please fully quit and restart Maruti Infotech, then try again.'
           };
         }
       },
@@ -849,7 +917,7 @@ export const useAccountingStore = create<AccountingState>()(
         } catch {
           return {
             ok: false,
-            error: 'Desktop app is out of date. Please fully quit and restart AccuLedger, then try again.'
+            error: 'Desktop app is out of date. Please fully quit and restart Maruti Infotech, then try again.'
           };
         }
       },
@@ -884,7 +952,7 @@ export const useAccountingStore = create<AccountingState>()(
         let customerNumber = (data.customer_number || '').trim().toUpperCase();
         const autoAssigned = !customerNumber;
         if (autoAssigned) {
-          // Automatic plain sequence (1, 2, 3…): suggestion skips taken numbers.
+          // Automatic plain sequence (1, 2, 3â€¦): suggestion skips taken numbers.
           customerNumber = get().suggestNextCustomerNumber().toUpperCase();
           if (!customerNumber) {
             return { success: false, error: 'No free customer number available.' };
@@ -975,13 +1043,13 @@ export const useAccountingStore = create<AccountingState>()(
         try {
           window.electronAPI?.customers.delete(id)?.catch(() => {});
         } catch {
-          // IPC unavailable — memory state remains the source of truth.
+          // IPC unavailable â€” memory state remains the source of truth.
         }
         get().logAudit('CUSTOMER_DELETED', 'CUSTOMER', id);
         return { success: true };
       },
 
-      createProduct: (productData, initialPrice) => {
+      createProduct: (productData, initialPrice, pcsPerBox) => {
         const id = `prod-${Date.now()}`;
         const newProd: Product = {
           ...productData,
@@ -989,6 +1057,13 @@ export const useAccountingStore = create<AccountingState>()(
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
         };
+
+        // Box packing is only valid for PCS-primary products (stock stays in PCS;
+        // BOX is the buy/sell lens on top).
+        const primaryCode = get().uoms[productData.primary_unit_id]?.code?.toUpperCase();
+        const boxPcs = pcsPerBox && primaryCode === 'PCS' && Number.isInteger(pcsPerBox) && pcsPerBox >= 2
+          ? pcsPerBox
+          : null;
 
         // Primary product unit
         const primaryPuId = `pu-${id}-primary`;
@@ -1003,12 +1078,28 @@ export const useAccountingStore = create<AccountingState>()(
           updated_at: new Date().toISOString()
         };
 
-        // Primary price
+        // BOX unit (optional): factor = pcs per box, usable for stock intake
+        // (dealer deliveries are box-only) and billing (BOX or PCS lines).
+        const boxPuId = `pu-${id}-box`;
+        const boxPU: ProductUnit | null = boxPcs
+          ? {
+              id: boxPuId,
+              product_id: id,
+              unit_id: 'uom-box',
+              conversion_to_primary: boxPcs,
+              is_stock_unit: true,
+              is_billing_unit: true,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString()
+            }
+          : null;
+
+        // Price anchor: per BOX for box-packed products (PCS derives), else primary.
         const priceId = `pp-${id}-1`;
         const primaryPrice: ProductPrice = {
           id: priceId,
           product_id: id,
-          unit_id: productData.primary_unit_id,
+          unit_id: boxPcs ? 'uom-box' : productData.primary_unit_id,
           price: initialPrice,
           effective_from: new Date().toISOString(),
           effective_to: null,
@@ -1016,7 +1107,9 @@ export const useAccountingStore = create<AccountingState>()(
           updated_at: new Date().toISOString()
         };
 
-        const newUnits: Record<string, ProductUnit> = { [primaryPuId]: primaryPU };
+        const newUnits: Record<string, ProductUnit> = boxPU
+          ? { [primaryPuId]: primaryPU, [boxPuId]: boxPU }
+          : { [primaryPuId]: primaryPU };
         const newPrices: Record<string, ProductPrice> = { [priceId]: primaryPrice };
 
         set((state) => ({
@@ -1071,6 +1164,30 @@ export const useAccountingStore = create<AccountingState>()(
         persistDiff({ productUnits: [newPU as unknown as Record<string, unknown>] });
         get().logAudit('PRODUCT_UNIT_CONFIGURED', 'UNIT_OF_MEASURE', id, newPU as unknown as Record<string, unknown>);
         return newPU;
+      },
+
+      // Box packing (buy in BOX, sell in BOX or PCS). PCS-primary products with
+      // an attached BOX row (integer factor â‰¥ 2). The BOX price is the pricing
+      // anchor; the PCS price derives from it (see the price resolvers).
+      getBoxMapping: (productId: string) => {
+        const { products, productUnits, uoms } = get();
+        const product = products[productId];
+        if (!product) return null;
+        const primaryCode = (uoms[product.primary_unit_id]?.code || '').trim().toUpperCase();
+        if (primaryCode !== 'PCS') return null;
+        const boxRow = Object.values(productUnits).find(
+          (pu) =>
+            pu.product_id === productId &&
+            (uoms[pu.unit_id]?.code || '').trim().toUpperCase() === 'BOX' &&
+            Number.isInteger(pu.conversion_to_primary) &&
+            pu.conversion_to_primary >= 2
+        );
+        if (!boxRow) return null;
+        return {
+          pcsPerBox: boxRow.conversion_to_primary,
+          pcsUnitId: product.primary_unit_id,
+          boxUnitId: boxRow.unit_id
+        };
       },
 
       getPieceWeightMapping: (productId: string) => {
@@ -1150,7 +1267,7 @@ export const useAccountingStore = create<AccountingState>()(
         }
         if (primaryIsGram) {
           // KG billing/display row (1 KG = 1000 gram). For KG-primary products
-          // the primary row itself is the KG row — nothing to ensure.
+          // the primary row itself is the KG row â€” nothing to ensure.
           const kgRow = existing.find((pu) => pu.unit_id === kg.id);
           if (kgRow) {
             if (kgRow.conversion_to_primary !== 1000 || !kgRow.is_billing_unit) {
@@ -1200,7 +1317,7 @@ export const useAccountingStore = create<AccountingState>()(
         const st = get();
         const mapping = st.getPieceWeightMapping(productId);
         if (!mapping) return { success: true }; // nothing mapped
-        // Recorded PCS movements derive their weight from this mapping — removing
+        // Recorded PCS movements derive their weight from this mapping â€” removing
         // it would silently reinterpret them 1:1 (convertQuantity fallback).
         const pcsUsed =
           Object.values(st.customerInventoryMovements).some(
@@ -1227,7 +1344,7 @@ export const useAccountingStore = create<AccountingState>()(
         try {
           window.electronAPI?.store.delete('productUnits', row.id)?.catch(() => {});
         } catch {
-          // IPC unavailable — memory state remains the source of truth.
+          // IPC unavailable â€” memory state remains the source of truth.
         }
         get().logAudit('PIECE_WEIGHT_REMOVED', 'PRODUCT_UNIT', row.id, { productId });
         return { success: true };
@@ -1270,6 +1387,17 @@ export const useAccountingStore = create<AccountingState>()(
       },
 
       resolvePriceForCustomer: (productId: string, unitId: string, customerId: string) => {
+        // Box-packed products: customers agree a BOX price; billing in PCS derives
+        // from that same BOX resolution (override if present, base otherwise).
+        const box = get().getBoxMapping(productId);
+        if (box && unitId === box.pcsUnitId) {
+          const boxRes = get().resolvePriceForCustomer(productId, box.boxUnitId, customerId);
+          return {
+            price: roundCurrency(boxRes.price / box.pcsPerBox),
+            basePrice: roundCurrency(boxRes.basePrice / box.pcsPerBox),
+            isCustom: boxRes.isCustom
+          };
+        }
         const basePrice = get().getProductEffectivePrice(productId, unitId);
         const override = Object.values(get().customerPrices).find(
           (cp) => cp.customer_id === customerId && cp.product_id === productId && cp.unit_id === unitId
@@ -1373,7 +1501,7 @@ export const useAccountingStore = create<AccountingState>()(
         try {
           window.electronAPI?.store.delete('customerPrices', existing.id)?.catch(() => {});
         } catch {
-          // IPC unavailable — memory state remains the source of truth.
+          // IPC unavailable â€” memory state remains the source of truth.
         }
         persistDiff({
           customerPriceHistory: [history as unknown as Record<string, unknown>]
@@ -1502,19 +1630,24 @@ export const useAccountingStore = create<AccountingState>()(
 
         if (!customer) return { success: false, error: 'Customer not found.' };
 
-        // Validate stock for all items
+        // Validate stock for all items — aggregated per product so two lines of
+        // the same product (BOX + loose PCS on one challan) cannot jointly
+        // overdraw the warehouse balance.
+        const requestedPrimary: Record<string, number> = {};
         for (const item of items) {
           const product = products[item.productId];
           if (!product) return { success: false, error: `Product not found: ${item.productId}` };
 
           const pUnits = Object.values(productUnits).filter((pu) => pu.product_id === item.productId);
           const qtyInPrimary = convertQuantity(item.quantity, item.unitId, product.primary_unit_id, pUnits);
-          const currentStock = getCurrentCompanyStock(item.productId);
-
-          if (currentStock < qtyInPrimary) {
+          requestedPrimary[item.productId] = roundCurrency((requestedPrimary[item.productId] || 0) + qtyInPrimary);
+        }
+        for (const [pid, qty] of Object.entries(requestedPrimary)) {
+          const currentStock = getCurrentCompanyStock(pid);
+          if (currentStock < qty) {
             return {
               success: false,
-              error: `Insufficient company warehouse stock for "${product.product_name}". Available: ${currentStock}, Requested: ${qtyInPrimary}`
+              error: `Insufficient company warehouse stock for "${products[pid].product_name}". Available: ${currentStock}, Requested: ${qty}`
             };
           }
         }
@@ -1620,9 +1753,9 @@ export const useAccountingStore = create<AccountingState>()(
       },
 
       // Multi-item customer return. Each line is validated against what the
-      // customer STILL HOLDS (delivered − already returned) — billed or
+      // customer STILL HOLDS (delivered âˆ’ already returned) â€” billed or
       // unbilled stock alike is returnable, so a product can come back after
-      // invoicing too. rate × quantity is recorded per RETURN line as the
+      // invoicing too. rate Ã— quantity is recorded per RETURN line as the
       // customer's return credit (0 when no rate is given).
       returnBatchFromCustomer: ({ customerId, referenceId, movementDate, items }) => {
         if (!items || items.length === 0) {
@@ -1694,7 +1827,7 @@ export const useAccountingStore = create<AccountingState>()(
         };
 
         // ATOMIC MUTATION: header + per-line Customer movement (RETURN, with
-        // rate) + per-line Company movement (CUSTOMER_RETURN — stock back in).
+        // rate) + per-line Company movement (CUSTOMER_RETURN â€” stock back in).
         const newCustomerMovs: Record<string, CustomerInventoryMovement> = {};
         const newCompanyMovs: Record<string, InventoryMovement> = {};
         const createdIds: string[] = [];
@@ -1788,8 +1921,22 @@ export const useAccountingStore = create<AccountingState>()(
       // Delivered-price variants for the return-rate dropdown: actual invoice
       // unit prices first (real money that changed hands), then the current
       // agreed override, then the product's active list price. Ascending, unique.
-      getCustomerDeliveredRates: (customerId, productId) => {
+      getCustomerDeliveredRates: (customerId, productId, unitId?) => {
         const { invoices, invoiceItems, customerPrices, productPrices } = get();
+        // Unit-aware (box-packed products): historical rates are tagged with
+        // their invoice-line unit and converted to the requested unit, so a
+        // per-BOX delivery rate never credits a per-PCS return (or vice versa).
+        const box = get().getBoxMapping(productId);
+        const convertRate = (rate: number, fromUnitId: string): number => {
+          if (!unitId || fromUnitId === unitId) return rate;
+          if (box) {
+            const fromFactor = fromUnitId === box.boxUnitId ? box.pcsPerBox : 1;
+            const toFactor = unitId === box.boxUnitId ? box.pcsPerBox : 1;
+            if (fromFactor !== toFactor) return roundCurrency((rate * fromFactor) / toFactor);
+          }
+          return rate;
+        };
+
         const rates = new Set<number>();
         const itemsByInvoice = new Map<string, InvoiceItem[]>();
         for (const ii of Object.values(invoiceItems)) {
@@ -1801,22 +1948,29 @@ export const useAccountingStore = create<AccountingState>()(
         for (const inv of Object.values(invoices)) {
           if (inv.customer_id !== customerId) continue;
           for (const ii of itemsByInvoice.get(inv.id) ?? []) {
-            if (ii.unit_price > 0) rates.add(ii.unit_price);
+            if (ii.unit_price > 0) rates.add(convertRate(ii.unit_price, ii.unit_id));
           }
         }
-        const override = Object.values(customerPrices).find(
-          (p) => p.customer_id === customerId && p.product_id === productId
-        );
-        if (override && override.price > 0) rates.add(override.price);
-        const activeListPrice = Object.values(productPrices).find(
-          (p) => p.product_id === productId && !p.effective_to
-        );
-        if (activeListPrice && activeListPrice.price > 0) rates.add(activeListPrice.price);
+        if (unitId) {
+          // Requested-unit override and list price (BOX for box-packed, unless
+          // the requested unit is PCS â€” then derived).
+          const resolved = get().resolvePriceForCustomer(productId, unitId, customerId);
+          if (resolved.price > 0) rates.add(resolved.price);
+        } else {
+          const override = Object.values(customerPrices).find(
+            (p) => p.customer_id === customerId && p.product_id === productId
+          );
+          if (override && override.price > 0) rates.add(override.price);
+          const activeListPrice = Object.values(productPrices).find(
+            (p) => p.product_id === productId && !p.effective_to
+          );
+          if (activeListPrice && activeListPrice.price > 0) rates.add(activeListPrice.price);
+        }
         return Array.from(rates).sort((a, b) => a - b);
       },
 
       // Manual credit apply: consume the customer's unspent return credit
-      // oldest-returns-first (partial consumption allowed — the last movement
+      // oldest-returns-first (partial consumption allowed â€” the last movement
       // may only give part of its credit), then record the applied amount as
       // an InvoicePayment so the invoice balance reflects the credit.
       applyReturnCreditToInvoice: ({ invoiceId, amount }) => {
@@ -1881,7 +2035,7 @@ export const useAccountingStore = create<AccountingState>()(
         return { success: true, paymentId: payment.paymentId };
       },
 
-      // Legacy single-product return kept for callers/tests — delegates to the
+      // Legacy single-product return kept for callers/tests â€” delegates to the
       // batch action, defaulting the rate to the current agreed price.
       createCustomerReturn: ({ customerId, productId, unitId, quantity, referenceId, movementDate, rate }) => {
         const resolvedRate = rate ?? (() => {
@@ -1991,7 +2145,7 @@ export const useAccountingStore = create<AccountingState>()(
         if (nextNumber < floor) {
           return {
             success: false,
-            error: `Next number cannot go below ${floor} — higher numbers are already issued in FY ${fy}.`
+            error: `Next number cannot go below ${floor} â€” higher numbers are already issued in FY ${fy}.`
           };
         }
         if (series.next_number === nextNumber) return { success: true };
@@ -2010,6 +2164,17 @@ export const useAccountingStore = create<AccountingState>()(
         const customer = customers[customerId];
         if (!customer) return { success: false, error: 'Customer not found.' };
         if (!items || items.length === 0) return { success: false, error: 'Invoice must contain at least one line item.' };
+        // Last line of defence on the money path: a zero/blank price must never
+        // silently bill ₹0 (the UI guards BOX/KG price gaps; the store enforces
+        // it for every caller).
+        for (const item of items) {
+          if (!(item.quantity > 0) || !Number.isFinite(item.quantity)) {
+            return { success: false, error: 'All invoice quantities must be greater than zero.' };
+          }
+          if (!(item.unitPrice > 0) || !Number.isFinite(item.unitPrice)) {
+            return { success: false, error: `Set a price before billing "${products[item.productId]?.product_name || 'item'}".` };
+          }
+        }
 
         const now = new Date().toISOString();
         // Backdated billing: the invoice belongs to its own date's FY, never the wall clock.
@@ -2017,7 +2182,7 @@ export const useAccountingStore = create<AccountingState>()(
         if (Number.isNaN(Date.parse(invDate))) {
           return { success: false, error: 'Invoice date is invalid.' };
         }
-        // "Future" means a later CALENDAR DAY (IST — the same calendar the FY
+        // "Future" means a later CALENDAR DAY (IST â€” the same calendar the FY
         // boundary uses), never a later instant: callers send date-only
         // strings (parsed as UTC midnight) or noon-pinned timestamps, so an
         // invoice dated today must be accepted at any hour of today.
@@ -2201,6 +2366,76 @@ export const useAccountingStore = create<AccountingState>()(
         return { success: true, invoiceId };
       },
 
+      // Challan-based period billing: net the window's deliveries and returns
+      // per product, then bill the net. Allocations attach BOTH kinds of
+      // movement so the invoice's ledger document is reproducible forever.
+      createInvoiceFromPeriod: ({ customerId, periodStart, periodEnd, otherCharges = 0, notes = '', status = 'DRAFT', invoiceDate }) => {
+        const { products } = get();
+        const customer = get().customers[customerId];
+        if (!customer) return { success: false, error: 'Customer not found.' };
+        if (!periodStart || !periodEnd) {
+          return { success: false, error: 'Billing period from/to dates are required.' };
+        }
+        if (periodStart.slice(0, 10) > periodEnd.slice(0, 10)) {
+          return { success: false, error: 'Billing period start must not be after its end.' };
+        }
+
+        const netting = get().previewPeriodNetting(customerId, periodStart, periodEnd);
+        if (netting.lines.length === 0) {
+          return {
+            success: false,
+            error: `No challans found for ${customer.customer_name} between ${periodStart} and ${periodEnd}.`
+          };
+        }
+
+        // Lines with zero/negative net stay off the invoice — their unattached
+        // returns carry forward to the next period automatically.
+        const billable = netting.billableLines;
+        if (billable.length === 0) {
+          return {
+            success: false,
+            error: `Nothing billable in this period — returns cover every delivery for ${customer.customer_name} between ${periodStart} and ${periodEnd}.`
+          };
+        }
+
+        // A missing price must refuse loudly, not silently bill zero.
+        try {
+          const pricedItems = billable.map((line) => {
+            if (!(line.rate > 0)) {
+              throw new Error(`Set a price before billing "${line.productName}" (${line.billingUnitCode}).`);
+            }
+            // Allocations: every challan that shaped this line's net — deliveries
+            // AND returns — in the movement's own unit (positive magnitudes; the
+            // movement's type carries the sign semantics).
+            const challans = [...line.broughtForwardChallans, ...line.challans];
+            return {
+              productId: line.productId,
+              unitId: line.billingUnitId,
+              quantity: line.billQty,
+              unitPrice: line.rate,
+              discount: 0,
+              movementAllocations: challans.map((c) => ({
+                movementId: c.movementId,
+                allocatedQuantity: c.quantity
+              }))
+            };
+          });
+
+          return get().createInvoice({
+            customerId,
+            billingPeriodStart: periodStart,
+            billingPeriodEnd: periodEnd,
+            items: pricedItems,
+            otherCharges,
+            notes,
+            status,
+            invoiceDate
+          });
+        } catch (err) {
+          return { success: false, error: err instanceof Error ? err.message : 'Invoice generation failed.' };
+        }
+      },
+
       finalizeInvoice: (invoiceId: string) => {
         const invoice = get().invoices[invoiceId];
         if (!invoice) return { success: false, error: 'Invoice not found.' };
@@ -2288,7 +2523,7 @@ export const useAccountingStore = create<AccountingState>()(
 
         const { outstanding } = get().getInvoiceOutstanding(invoiceId);
         const total = roundCurrency(cashAmount + creditAmount);
-        // Credit availability first — the more specific rejection (the
+        // Credit availability first â€” the more specific rejection (the
         // outstanding cap may also trip, but "only X available" explains why).
         if (creditAmount > 0) {
           const available = get().getCustomerReturnCredit(invoice.customer_id);
@@ -2309,7 +2544,7 @@ export const useAccountingStore = create<AccountingState>()(
 
         // Credit portion: consume the customer's RETURN movements oldest-first
         // (same policy as applyReturnCreditToInvoice) and record it as its own
-        // OTHER / RETURN-CREDIT payment row — no cash moves.
+        // OTHER / RETURN-CREDIT payment row â€” no cash moves.
         if (creditAmount > 0) {
           const returnMovs = Object.values(get().customerInventoryMovements)
             .filter((m) => m.customer_id === invoice.customer_id && m.movement_type === 'RETURN' && (m.rate ?? 0) > 0)
@@ -2471,7 +2706,7 @@ export const useAccountingStore = create<AccountingState>()(
               try {
                 window.electronAPI?.store.delete(entityType, id)?.catch(() => {});
               } catch {
-                // IPC unavailable — memory state remains the source of truth.
+                // IPC unavailable â€” memory state remains the source of truth.
               }
             }
           }
@@ -2524,7 +2759,7 @@ export const useAccountingStore = create<AccountingState>()(
       version: 4,
       migrate: (persistedState: any) => {
         if (!persistedState) return persistedState;
-        // v3: single-owner — drop any legacy multi-user session payload.
+        // v3: single-owner â€” drop any legacy multi-user session payload.
         const { users: _legacyUsers, currentUser: _legacyCurrent, ...rest } = persistedState;
         // GST slab change: 18% total (9% CGST + 9% SGST) -> 5% total (2.5% + 2.5%).
         // Bump only known old app defaults (18, and the transient 10 from the
@@ -2540,7 +2775,7 @@ export const useAccountingStore = create<AccountingState>()(
             updated_at: new Date().toISOString()
           };
         }
-        // v4: FY numbering — default the series start number and map for old payloads.
+        // v4: FY numbering â€” default the series start number and map for old payloads.
         if (
           businessSettings &&
           (typeof businessSettings.invoice_start_number !== 'number' ||
@@ -2650,3 +2885,4 @@ export const useAccountingStore = create<AccountingState>()(
     }
   )
 );
+

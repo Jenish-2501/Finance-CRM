@@ -323,7 +323,7 @@ export const SettingsView: React.FC = () => {
         kind: 'error',
         text: isElectronShell()
           ? 'Desktop shell failed to load its database bridge. Fully quit (end all electron processes) and relaunch the app.'
-          : 'Passcode management needs the desktop app — please open AccuLedger in Electron, not the browser preview.'
+          : 'Passcode management needs the desktop app — please open Maruti Infotech in Electron, not the browser preview.'
       });
       return;
     }
@@ -349,7 +349,7 @@ export const SettingsView: React.FC = () => {
       // the running Electron shell has no 'auth:changePasscode' handler yet.
       setPasscodeMessage({
         kind: 'error',
-        text: 'Desktop app is out of date. Please fully quit and restart AccuLedger, then try again.'
+        text: 'Desktop app is out of date. Please fully quit and restart Maruti Infotech, then try again.'
       });
     } finally {
       setChangingPasscode(false);

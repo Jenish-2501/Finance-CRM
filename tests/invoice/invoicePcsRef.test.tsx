@@ -42,11 +42,12 @@ afterEach(() => cleanup());
 
 const now = () => new Date().toISOString();
 
-// Invoice lines in KG or GRAM backed by PCS allocations carry the "(≈ N PCS)"
-// reference inside the Qty column — no new column. Weight-only allocations
-// must never wear the PCS label.
-describe('invoice PCS reference in qty column', () => {
-  it('shows PCS under KG and GRAM lines backed by PCS allocations', async () => {
+// Invoice Qty cells print the bare quantity only — the old "(≈ N PCS)"
+// reference under KG/GRAM lines is gone (the ≈ glyph rendered as garbage in
+// the embedded mono font). PCS context survives only in the allocation audit
+// line under the bill-to grid.
+describe('invoice qty column prints plain quantity only', () => {
+  it('shows the bare qty for a KG line backed by PCS allocations', async () => {
     const store = (await loadStore()).getState();
     const prod = store.createProduct(
       { product_name: 'Washer 250g', sku: 'W-250', description: '', primary_unit_id: 'uom-gram', is_active: true }, 0
@@ -93,10 +94,12 @@ describe('invoice PCS reference in qty column', () => {
         />
       </LanguageProvider>
     );
-    // "(≈ 4 PCS)" — the ≈ glyph switches the run to NUL-padded bytes, so the
-    // readable reconstruction anchors on the ASCII tail.
-    expect(pdfText()).toContain('4 PCS)');
-    expect(pdfText()).toContain('PCS');
+    // The ≈-based qty reference is gone from the PDF (it printed as garbage
+    // "H" in the mono font); the quantity prints bare in the Qty column.
+    expect(pdfText()).not.toContain('≈');
+    // PCS context survives only in the allocation audit line:
+    // "Challan #CH-PCS-1: 4 PCS".
+    expect(pdfText()).toContain('4 PCS');
   });
 
   it('never labels gram allocations as PCS', async () => {

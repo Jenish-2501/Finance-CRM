@@ -26,7 +26,7 @@ Shop back-office / billing-counter desktop. Core workflows: maintain customers (
 
 Confirmed capabilities: dashboard, billing, invoices (immutable snapshots), payments and allocations, customers, products with units and price tiers, company inventory, customer (consignment) inventory, delivery challans, GST/tax and receivables reports with CSV export, business settings (GSTIN, state code, invoice numbering, tax defaults), audit log, localStorage-to-SQLite migration.
 
-Constraints: single-machine desktop (Electron + better-sqlite3), fully offline, single business, INR currency, Indian GST rules (CGST/SGST/IGST, GSTR-1). Brand: the incumbent code already names the product "AccuLedger" (Sidebar branding, invoice/challan print footers); the "React Example App" build identity in package.json is a placeholder and must not be treated as the brand. Open decision: user confirmation that AccuLedger is the real product name.
+Constraints: single-machine desktop (Electron + better-sqlite3), fully offline, single business, INR currency, Indian GST rules (CGST/SGST/IGST, GSTR-1). Brand: Maruti Infotech (user-confirmed — the earlier "AccuLedger" name in branding was replaced everywhere; the "React Example App" build identity in package.json is a placeholder and must not be treated as the brand).
 
 ## Evidence on Hand
 

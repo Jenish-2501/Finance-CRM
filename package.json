@@ -64,7 +64,7 @@
   },
   "build": {
     "appId": "com.reactexample.app",
-    "productName": "Maruti",
+    "productName": "Maruti Infotech",
     "artifactName": "MarutiSetup.exe",
     "icon": "build/icon.ico",
     "directories": {

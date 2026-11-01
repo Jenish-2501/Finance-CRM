@@ -139,7 +139,7 @@ export async function saveGuOverrideDiff(
   } catch {
     return {
       ok: false,
-      error: 'Desktop app is out of date. Please fully quit and restart AccuLedger, then try again.',
+      error: 'Desktop app is out of date. Please fully quit and restart Maruti Infotech, then try again.',
     };
   }
 }
@@ -159,7 +159,7 @@ export async function resetGuOverrides(
     } catch {
       return {
         ok: false,
-        error: 'Desktop app is out of date. Please fully quit and restart AccuLedger, then try again.',
+        error: 'Desktop app is out of date. Please fully quit and restart Maruti Infotech, then try again.',
       };
     }
   }
@@ -176,7 +176,7 @@ export async function resetGuOverrides(
   } catch {
     return {
       ok: false,
-      error: 'Desktop app is out of date. Please fully quit and restart AccuLedger, then try again.',
+      error: 'Desktop app is out of date. Please fully quit and restart Maruti Infotech, then try again.',
     };
   }
 }

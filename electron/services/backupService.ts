@@ -38,7 +38,7 @@ export function getActiveDatabasePath(): string | null {
 }
 
 // A backup is restorable only if it is an intact SQLite file holding the core
-// AccuLedger tables. Older versions are fine — initDatabase migrates forward
+// Maruti Infotech tables. Older versions are fine — initDatabase migrates forward
 // after the replace. Checked on a read-only probe; the live DB is untouched.
 const CORE_RESTORE_TABLES = [
   'business_settings',

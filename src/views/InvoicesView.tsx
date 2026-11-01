@@ -1,10 +1,14 @@
 import React, { useState } from 'react';
 import { useAccountingStore } from '../store/accountingStore';
-import { InvoiceStatus } from '../types/database';
+import { Invoice, InvoiceStatus } from '../types/database';
 import { formatINR } from '../utils/calculations';
+import { buildInvoiceModeDoc, invoiceDocFilename, docToBase64, InvoiceDocMode } from '../utils/invoiceDocs';
 import {
   Search,
-  Eye
+  Eye,
+  Download,
+  Printer,
+  MoreVertical
 } from 'lucide-react';
 import { Badge } from '../components/common/Badge';
 import { Modal } from '../components/common/Modal';
@@ -17,6 +21,55 @@ interface InvoicesViewProps {
   onOpenPaymentModal?: (invoiceId: string) => void;
   onNavigateToBilling?: () => void;
 }
+
+// One row's action menu: document downloads/prints (challan ledger, tax
+// invoice, or both merged) plus the Collect shortcut. A fixed transparent
+// backdrop closes it on any outside click.
+const InvoiceActionsCell: React.FC<{
+  menuLabel: string;
+  items: Array<{ key: string; label: string; icon: React.ReactNode; onClick: () => void }>;
+}> = ({ menuLabel, items }) => {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="relative inline-block text-left">
+      <Button
+        variant="secondary"
+        size="icon"
+        onClick={() => setOpen((v) => !v)}
+        aria-label={menuLabel}
+        aria-expanded={open}
+        title={menuLabel}
+      >
+        <MoreVertical className="w-3.5 h-3.5" />
+      </Button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} aria-hidden="true" />
+          <div
+            className="absolute right-0 z-30 mt-1 w-60 rounded-md border border-border bg-card shadow-lg py-1 text-xs"
+            role="menu"
+          >
+            {items.map((it) => (
+              <button
+                key={it.key}
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setOpen(false);
+                  it.onClick();
+                }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-muted transition-colors"
+              >
+                {it.icon}
+                <span>{it.label}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
 
 export const InvoicesView: React.FC<InvoicesViewProps> = ({
   selectedInvoiceId = null,
@@ -67,6 +120,86 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
 
   const handleCancel = (id: string, reason: string) => {
     cancelInvoice(id, reason);
+  };
+
+  // Direct document actions — same builder/bytes as the preview modal.
+  const buildDocFor = (inv: Invoice, mode: InvoiceDocMode) => {
+    const state = useAccountingStore.getState();
+    const items = Object.values(state.invoiceItems).filter((i) => i.invoice_id === inv.id);
+    const pays = Object.values(state.invoicePayments).filter((p) => p.invoice_id === inv.id);
+    const allocs = Object.values(state.invoiceAllocations).filter((a) => a.invoice_id === inv.id);
+    return buildInvoiceModeDoc(inv, items, pays, allocs, mode, state);
+  };
+
+  const handleDownload = async (inv: Invoice, mode: InvoiceDocMode) => {
+    const doc = buildDocFor(inv, mode);
+    const filename = invoiceDocFilename(inv, mode);
+    // Web fallback: direct jsPDF download. Electron: save dialog to chosen folder.
+    if (!window.electronAPI?.files?.savePDFBytes) {
+      doc.save(filename);
+      return;
+    }
+    await window.electronAPI.files.savePDFBytes(filename, docToBase64(doc));
+  };
+
+  const handlePrint = async (inv: Invoice, mode: InvoiceDocMode) => {
+    const doc = buildDocFor(inv, mode);
+    if (!window.electronAPI?.printing) {
+      window.print();
+      return;
+    }
+    await window.electronAPI.printing.printPdf({ pdfBase64: docToBase64(doc), silent: false });
+  };
+
+  const menuItemsFor = (inv: Invoice, outstanding: number) => {
+    return [
+      {
+        key: 'dl-ledger',
+        label: t('invoices.dlLedger'),
+        icon: <Download className="w-3.5 h-3.5 text-muted-foreground" aria-hidden="true" />,
+        onClick: () => void handleDownload(inv, 'ledger')
+      },
+      {
+        key: 'dl-invoice',
+        label: t('invoices.dlInvoice'),
+        icon: <Download className="w-3.5 h-3.5 text-muted-foreground" aria-hidden="true" />,
+        onClick: () => void handleDownload(inv, 'invoice')
+      },
+      {
+        key: 'dl-both',
+        label: t('invoices.dlBoth'),
+        icon: <Download className="w-3.5 h-3.5 text-muted-foreground" aria-hidden="true" />,
+        onClick: () => void handleDownload(inv, 'both')
+      },
+      {
+        key: 'pr-ledger',
+        label: t('invoices.prLedger'),
+        icon: <Printer className="w-3.5 h-3.5 text-muted-foreground" aria-hidden="true" />,
+        onClick: () => void handlePrint(inv, 'ledger')
+      },
+      {
+        key: 'pr-invoice',
+        label: t('invoices.prInvoice'),
+        icon: <Printer className="w-3.5 h-3.5 text-muted-foreground" aria-hidden="true" />,
+        onClick: () => void handlePrint(inv, 'invoice')
+      },
+      {
+        key: 'pr-both',
+        label: t('invoices.prBoth'),
+        icon: <Printer className="w-3.5 h-3.5 text-muted-foreground" aria-hidden="true" />,
+        onClick: () => void handlePrint(inv, 'both')
+      },
+      ...(inv.status === 'FINALIZED' && outstanding > 0 && onOpenPaymentModal
+        ? [
+            {
+              key: 'collect',
+              label: t('invoices.collect'),
+              icon: <span className="w-3.5 text-center font-mono font-bold" aria-hidden="true">₹</span>,
+              onClick: () => onOpenPaymentModal(inv.id)
+            }
+          ]
+        : [])
+    ];
   };
 
   return (
@@ -196,22 +329,16 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
                             variant="secondary"
                             size="icon"
                             onClick={() => setActiveInvoiceId(inv.id)}
-                            title={t('invoices.preview')}
+                            title={t('invoices.view')}
+                            aria-label={t('invoices.view')}
                           >
                             <Eye className="w-3.5 h-3.5" />
                           </Button>
 
-                          {inv.status === 'FINALIZED' && outstanding > 0 && onOpenPaymentModal && (
-                            <Button
-                              variant="primary"
-                              size="sm"
-                              onClick={() => onOpenPaymentModal(inv.id)}
-                              title={t('invoices.collectTitle')}
-                              className="text-[11px] px-2 py-1"
-                            >
-                              {t('invoices.collect')}
-                            </Button>
-                          )}
+                          <InvoiceActionsCell
+                            menuLabel={t('invoices.actionsMenu')}
+                            items={menuItemsFor(inv, outstanding)}
+                          />
                         </div>
                       </TD>
                     </TR>

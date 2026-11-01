@@ -14,11 +14,11 @@ let dbPath: string | null = null;
 // A legacy application.db (pre-split installs) is adopted once by copying
 // it to the new name; the -shm sidecar is skipped (transient, rebuilt).
 //
-// App renames (AccuLedger -> Maruti) move Electron's userData folder, which
-// would orphan the previous install's database. When our database is absent,
-// adopt it once from a previous product folder (plus its backups), so the
-// rename upgrades in place with zero data loss.
-const LEGACY_USERDATA_NAMES = ['AccuLedger', 'react-example'];
+// App renames (AccuLedger -> Maruti -> Maruti Infotech) move Electron's
+// userData folder, which would orphan the previous install's database. When
+// our database is absent, adopt it once from a previous product folder (plus
+// its backups), so the rename upgrades in place with zero data loss.
+const LEGACY_USERDATA_NAMES = ['Maruti', 'AccuLedger', 'react-example'];
 
 function copyIfPresent(src: string, dest: string): void {
   try {
